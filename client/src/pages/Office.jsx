@@ -1,7 +1,12 @@
-import Login from "./pages/Login";
+function Office() {
+  const username = localStorage.getItem("username");
 
-function App() {
-  return <Login />;
+  return (
+    <div>
+      <h1>Welcome {username}</h1>
+      <h3>Virtual Office</h3>
+    </div>
+  );
 }
 
-export default App;
+export default Office;
