@@ -1,10 +1,16 @@
-function Office() {
-  const username = localStorage.getItem("username");
+import Navbar from "../components/Navbar";
+import Sidebar from "../components/Sidebar";
+import OfficeCanvas from "../components/OfficeCanvas";
 
+function Office() {
   return (
-    <div>
-      <h1>Welcome {username}</h1>
-      <h3>Virtual Office</h3>
+    <div className="h-screen bg-slate-950">
+      <Navbar />
+
+      <div className="flex h-[calc(100vh-64px)]">
+        <Sidebar />
+        <OfficeCanvas />
+      </div>
     </div>
   );
 }
