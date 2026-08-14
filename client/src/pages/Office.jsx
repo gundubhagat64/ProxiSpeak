@@ -4,13 +4,22 @@ import OfficeCanvas from "../components/OfficeCanvas";
 
 function Office() {
   return (
-    <div className="h-screen bg-slate-950">
+    <div className="h-screen bg-slate-950 flex flex-col">
+
+      {/* Navbar */}
       <Navbar />
 
-      <div className="flex h-[calc(100vh-64px)]">
+      {/* Main Content */}
+      <div className="flex flex-1 overflow-hidden">
+
+        {/* Sidebar */}
         <Sidebar />
+
+        {/* Office Canvas */}
         <OfficeCanvas />
+
       </div>
+
     </div>
   );
 }

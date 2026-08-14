@@ -1,25 +1,27 @@
-import { Bell, Settings, UserCircle2 } from "lucide-react";
+import { Home, Users, Mic, Settings } from "lucide-react";
 
-function Navbar() {
-  const username = localStorage.getItem("username") || "Guest";
-
+function MobileNavbar() {
   return (
-    <header className="h-16 bg-slate-900 border-b border-slate-700 flex items-center justify-between px-6">
-      <h1 className="text-2xl font-bold text-cyan-400">
-        ProxiSpeak
-      </h1>
+    <div className="fixed bottom-0 left-0 right-0 bg-slate-900 border-t border-slate-700 flex justify-around items-center h-16 z-50 lg:hidden">
 
-      <div className="flex items-center gap-5 text-white">
-        <Bell size={20} />
-        <Settings size={20} />
+      <button className="text-cyan-400">
+        <Home size={24} />
+      </button>
 
-        <div className="flex items-center gap-2">
-          <UserCircle2 size={32} />
-          <span>{username}</span>
-        </div>
-      </div>
-    </header>
+      <button className="text-white">
+        <Users size={24} />
+      </button>
+
+      <button className="text-white">
+        <Mic size={24} />
+      </button>
+
+      <button className="text-white">
+        <Settings size={24} />
+      </button>
+
+    </div>
   );
 }
 
-export default Navbar;
+export default MobileNavbar;

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import Avatar from "./Avatar";
 import Furniture from "./Furniture";
+import MiniMap from "./MiniMap";
 
 function OfficeCanvas() {
   const [position, setPosition] = useState({
@@ -20,9 +21,9 @@ function OfficeCanvas() {
 
   // Obstacles
   const obstacles = [
-    { x: 350, y: 180, width: 140, height: 80 },   // Table 1
-    { x: 650, y: 320, width: 140, height: 80 },   // Table 2
-    { x: 100, y: 430, width: 220, height: 140 },  // Meeting Room
+    { x: 350, y: 180, width: 140, height: 80 },
+    { x: 650, y: 320, width: 140, height: 80 },
+    { x: 100, y: 430, width: 220, height: 140 },
   ];
 
   // Collision Detection
@@ -55,7 +56,7 @@ function OfficeCanvas() {
         x = Math.max(0, Math.min(x, 1150));
         y = Math.max(0, Math.min(y, 650));
 
-        // Stop at Furniture
+        // Collision Check
         if (!checkCollision(x, y)) {
           return { x, y };
         }
@@ -70,21 +71,38 @@ function OfficeCanvas() {
   }, []);
 
   return (
-    <div className="flex-1 relative overflow-hidden bg-slate-900">
+    <div className="flex-1 relative overflow-hidden bg-gradient-to-br from-slate-900 via-slate-800 to-black pb-16 lg:pb-0">
 
-      {/* Grid */}
-      <div
-        className="absolute inset-0"
-        style={{
-          backgroundImage: `
-            linear-gradient(rgba(255,255,255,0.08) 1px, transparent 1px),
-            linear-gradient(90deg, rgba(255,255,255,0.08) 1px, transparent 1px)
-          `,
-          backgroundSize: "50px 50px",
-        }}
-      />
+      {/* Glow Background */}
+      <div className="absolute w-96 h-96 bg-cyan-500/10 rounded-full blur-3xl -top-32 -left-32"></div>
 
-      {/* Office Furniture */}
+      <div className="absolute w-96 h-96 bg-purple-500/10 rounded-full blur-3xl bottom-0 right-0"></div>
+
+    {/* Premium Office Floor */}
+<div
+  className="absolute inset-0"
+  style={{
+    background: `
+      linear-gradient(90deg, #3b3b3b 1px, transparent 1px),
+      linear-gradient(#3b3b3b 1px, transparent 1px),
+      linear-gradient(135deg, #2f343c, #23272f)
+    `,
+    backgroundSize: "80px 80px, 80px 80px, 100% 100%",
+  }}
+/>
+
+{/* Floor Lighting */}
+<div className="absolute inset-0 bg-gradient-to-br from-white/5 via-transparent to-black/10 pointer-events-none" />
+{/* Light Reflection */}
+<div
+  className="absolute inset-0 pointer-events-none"
+  style={{
+    background:
+      "linear-gradient(to bottom right, rgba(255,255,255,0.06), transparent 45%)",
+  }}
+/>
+
+      {/* Furniture */}
       <Furniture />
 
       {/* Your Avatar */}
@@ -103,6 +121,15 @@ function OfficeCanvas() {
           name={user.name}
         />
       ))}
+
+      {/* Mini Map (Desktop Only) */}
+      <div className="hidden lg:block">
+        <MiniMap
+          position={position}
+          users={users}
+        />
+      </div>
+
     </div>
   );
 }
