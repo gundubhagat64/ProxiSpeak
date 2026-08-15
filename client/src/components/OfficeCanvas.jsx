@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import Avatar from "./Avatar";
 import Furniture from "./Furniture";
 import MiniMap from "./MiniMap";
+import socket from "../socket";
 
 function OfficeCanvas() {
   const [position, setPosition] = useState({
@@ -9,15 +10,21 @@ function OfficeCanvas() {
     y: 150,
   });
 
+  const [users, setUsers] = useState([]);
+
   const username = localStorage.getItem("username") || "Guest";
 
-  // Dummy Employees
-  const users = [
-    { id: 1, name: "Rahul", x: 550, y: 180 },
-    { id: 2, name: "Priya", x: 650, y: 250 },
-    { id: 3, name: "Amit", x: 350, y: 350 },
-    { id: 4, name: "Neha", x: 800, y: 180 },
-  ];
+  // Create a unique user ID
+  const [userId] = useState(() => {
+    let id = localStorage.getItem("userId");
+
+    if (!id) {
+      id = crypto.randomUUID();
+      localStorage.setItem("userId", id);
+    }
+
+    return id;
+  });
 
   // Obstacles
   const obstacles = [
@@ -40,67 +47,156 @@ function OfficeCanvas() {
     });
   };
 
+  // Socket connection
+  useEffect(() => {
+    socket.connect();
+
+    // Join office
+    socket.emit("user:join", {
+      userId,
+      name: username,
+      x: position.x,
+      y: position.y,
+    });
+
+    // Receive online users
+    socket.on("users:list", (onlineUsers) => {
+      setUsers(onlineUsers);
+    });
+
+    // Someone joined
+    socket.on("user:joined", (user) => {
+      setUsers((prev) => {
+        const exists = prev.some(
+          (item) => item.userId === user.userId
+        );
+
+        if (exists) {
+          return prev;
+        }
+
+        return [...prev, user];
+      });
+    });
+
+    // Someone moved
+    socket.on("avatar:moved", (data) => {
+      setUsers((prev) =>
+        prev.map((user) =>
+          user.userId === data.userId
+            ? {
+                ...user,
+                position: data.position,
+              }
+            : user
+        )
+      );
+    });
+
+    // Someone left
+    socket.on("user:left", (data) => {
+      setUsers((prev) =>
+        prev.filter((user) => user.userId !== data.userId)
+      );
+    });
+
+    // Server error
+    socket.on("server:error", (data) => {
+      console.error("Server error:", data.message);
+    });
+
+    return () => {
+      socket.off("users:list");
+      socket.off("user:joined");
+      socket.off("avatar:moved");
+      socket.off("user:left");
+      socket.off("server:error");
+
+      socket.disconnect();
+    };
+  }, []);
+
+  // Keyboard movement
   useEffect(() => {
     const handleKey = (e) => {
+      const allowedKeys = [
+        "ArrowUp",
+        "ArrowDown",
+        "ArrowLeft",
+        "ArrowRight",
+      ];
+
+      if (!allowedKeys.includes(e.key)) {
+        return;
+      }
+
       setPosition((prev) => {
         let { x, y } = prev;
 
         const speed = 10;
 
-        if (e.key === "ArrowUp") y -= speed;
-        if (e.key === "ArrowDown") y += speed;
-        if (e.key === "ArrowLeft") x -= speed;
-        if (e.key === "ArrowRight") x += speed;
+        if (e.key === "ArrowUp") {
+          y -= speed;
+        }
 
-        // Canvas Boundary
+        if (e.key === "ArrowDown") {
+          y += speed;
+        }
+
+        if (e.key === "ArrowLeft") {
+          x -= speed;
+        }
+
+        if (e.key === "ArrowRight") {
+          x += speed;
+        }
+
+        // Canvas boundary
         x = Math.max(0, Math.min(x, 1150));
         y = Math.max(0, Math.min(y, 650));
 
-        // Collision Check
-        if (!checkCollision(x, y)) {
-          return { x, y };
+        // Collision
+        if (checkCollision(x, y)) {
+          return prev;
         }
 
-        return prev;
+        // Send movement to server
+        socket.emit("avatar:move", {
+          userId,
+          x,
+          y,
+        });
+
+        return { x, y };
       });
     };
 
     window.addEventListener("keydown", handleKey);
 
-    return () => window.removeEventListener("keydown", handleKey);
-  }, []);
+    return () => {
+      window.removeEventListener("keydown", handleKey);
+    };
+  }, [userId]);
 
   return (
-    <div className="flex-1 relative overflow-hidden bg-gradient-to-br from-slate-900 via-slate-800 to-black pb-16 lg:pb-0">
+    <div className="flex-1 relative overflow-hidden bg-slate-900 pb-16 lg:pb-0">
 
-      {/* Glow Background */}
-      <div className="absolute w-96 h-96 bg-cyan-500/10 rounded-full blur-3xl -top-32 -left-32"></div>
+      {/* Office Floor */}
+      <div
+        className="absolute inset-0"
+        style={{
+          background: `
+            linear-gradient(90deg, #3b3b3b 1px, transparent 1px),
+            linear-gradient(#3b3b3b 1px, transparent 1px),
+            linear-gradient(135deg, #2f343c, #23272f)
+          `,
+          backgroundSize:
+            "80px 80px, 80px 80px, 100% 100%",
+        }}
+      />
 
-      <div className="absolute w-96 h-96 bg-purple-500/10 rounded-full blur-3xl bottom-0 right-0"></div>
-
-    {/* Premium Office Floor */}
-<div
-  className="absolute inset-0"
-  style={{
-    background: `
-      linear-gradient(90deg, #3b3b3b 1px, transparent 1px),
-      linear-gradient(#3b3b3b 1px, transparent 1px),
-      linear-gradient(135deg, #2f343c, #23272f)
-    `,
-    backgroundSize: "80px 80px, 80px 80px, 100% 100%",
-  }}
-/>
-
-{/* Floor Lighting */}
-<div className="absolute inset-0 bg-gradient-to-br from-white/5 via-transparent to-black/10 pointer-events-none" />
-{/* Light Reflection */}
-<div
-  className="absolute inset-0 pointer-events-none"
-  style={{
-    background:
-      "linear-gradient(to bottom right, rgba(255,255,255,0.06), transparent 45%)",
-  }}
-/>
+      {/* Floor Lighting */}
+      <div className="absolute inset-0 bg-gradient-to-br from-white/5 via-transparent to-black/10 pointer-events-none" />
 
       {/* Furniture */}
       <Furniture />
@@ -112,21 +208,30 @@ function OfficeCanvas() {
         name={username}
       />
 
-      {/* Dummy Users */}
-      {users.map((user) => (
-        <Avatar
-          key={user.id}
-          x={user.x}
-          y={user.y}
-          name={user.name}
-        />
-      ))}
+      {/* Online Users */}
+      {users
+        .filter((user) => user.userId !== userId)
+        .map((user) => (
+          <Avatar
+            key={user.userId}
+            x={user.position?.x ?? 400}
+            y={user.position?.y ?? 300}
+            name={user.name}
+          />
+        ))}
 
-      {/* Mini Map (Desktop Only) */}
+      {/* Mini Map */}
       <div className="hidden lg:block">
         <MiniMap
           position={position}
-          users={users}
+          users={users
+            .filter((user) => user.userId !== userId)
+            .map((user) => ({
+              id: user.userId,
+              x: user.position?.x ?? 400,
+              y: user.position?.y ?? 300,
+              name: user.name,
+            }))}
         />
       </div>
 
