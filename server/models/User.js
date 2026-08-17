@@ -33,11 +33,19 @@ const userSchema = new mongoose.Schema(
     },
 
     location: {
-      type: [Number],
-        default: [400, 300]
+      type: {
+        type: String,
+        enum: ["Point"],
+        default: "Point"
       },
 
-      isOnline: {
+      coordinates: {
+        type: [Number],
+        default: [40, 30]
+      }
+    },
+
+    isOnline: {
       type: Boolean,
       default: true
     }
@@ -47,6 +55,6 @@ const userSchema = new mongoose.Schema(
   }
 );
 
-userSchema.index({ location: "2d" });
+userSchema.index({ location: "2dsphere" });
 
 module.exports = mongoose.model("User", userSchema);
