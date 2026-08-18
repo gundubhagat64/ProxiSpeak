@@ -3,6 +3,7 @@ import Avatar from "./Avatar";
 import Furniture from "./Furniture";
 import MiniMap from "./MiniMap";
 import OnlineUsers from "./OnlineUsers";
+import ChatBox from "./ChatBox";
 import socket from "../socket";
 
 function OfficeCanvas() {
@@ -13,7 +14,8 @@ function OfficeCanvas() {
 
   const [users, setUsers] = useState([]);
 
-  const username = localStorage.getItem("username") || "Guest";
+  const username =
+    localStorage.getItem("username") || "Guest";
 
   // Create unique user ID
   const [userId] = useState(() => {
@@ -67,7 +69,10 @@ function OfficeCanvas() {
 
   useEffect(() => {
     const handleConnect = () => {
-      console.log("Socket connected:", socket.id);
+      console.log(
+        "Socket connected:",
+        socket.id
+      );
 
       socket.emit("user:join", {
         userId,
@@ -76,22 +81,28 @@ function OfficeCanvas() {
         y: position.y,
       });
 
-      console.log("Join request sent:", username);
+      console.log(
+        "Join request sent:",
+        username
+      );
     };
 
-    // Receive online users
     const handleUsersList = (onlineUsers) => {
-      console.log("Online users:", onlineUsers);
+      console.log(
+        "Online users:",
+        onlineUsers
+      );
+
       setUsers(onlineUsers);
     };
 
-    // Someone joined
     const handleUserJoined = (user) => {
       console.log("User joined:", user);
 
       setUsers((prev) => {
         const exists = prev.some(
-          (item) => item.userId === user.userId
+          (item) =>
+            item.userId === user.userId
         );
 
         if (exists) {
@@ -102,7 +113,6 @@ function OfficeCanvas() {
       });
     };
 
-    // Someone moved
     const handleAvatarMoved = (data) => {
       setUsers((prev) =>
         prev.map((user) =>
@@ -116,18 +126,20 @@ function OfficeCanvas() {
       );
     };
 
-    // Someone left
     const handleUserLeft = (data) => {
-      console.log("User left:", data.userId);
+      console.log(
+        "User left:",
+        data.userId
+      );
 
       setUsers((prev) =>
         prev.filter(
-          (user) => user.userId !== data.userId
+          (user) =>
+            user.userId !== data.userId
         )
       );
     };
 
-    // Server error
     const handleServerError = (data) => {
       console.error(
         "Server error:",
@@ -135,29 +147,72 @@ function OfficeCanvas() {
       );
     };
 
-    // Register listeners
-    socket.on("connect", handleConnect);
-    socket.on("users:list", handleUsersList);
-    socket.on("user:joined", handleUserJoined);
-    socket.on("avatar:moved", handleAvatarMoved);
-    socket.on("user:left", handleUserLeft);
-    socket.on("server:error", handleServerError);
+    socket.on(
+      "connect",
+      handleConnect
+    );
 
-    // Connect
+    socket.on(
+      "users:list",
+      handleUsersList
+    );
+
+    socket.on(
+      "user:joined",
+      handleUserJoined
+    );
+
+    socket.on(
+      "avatar:moved",
+      handleAvatarMoved
+    );
+
+    socket.on(
+      "user:left",
+      handleUserLeft
+    );
+
+    socket.on(
+      "server:error",
+      handleServerError
+    );
+
     if (!socket.connected) {
       socket.connect();
     } else {
       handleConnect();
     }
 
-    // Cleanup
     return () => {
-      socket.off("connect", handleConnect);
-      socket.off("users:list", handleUsersList);
-      socket.off("user:joined", handleUserJoined);
-      socket.off("avatar:moved", handleAvatarMoved);
-      socket.off("user:left", handleUserLeft);
-      socket.off("server:error", handleServerError);
+      socket.off(
+        "connect",
+        handleConnect
+      );
+
+      socket.off(
+        "users:list",
+        handleUsersList
+      );
+
+      socket.off(
+        "user:joined",
+        handleUserJoined
+      );
+
+      socket.off(
+        "avatar:moved",
+        handleAvatarMoved
+      );
+
+      socket.off(
+        "user:left",
+        handleUserLeft
+      );
+
+      socket.off(
+        "server:error",
+        handleServerError
+      );
 
       socket.disconnect();
     };
@@ -201,22 +256,29 @@ function OfficeCanvas() {
           x += speed;
         }
 
-        // Canvas boundary
-        x = Math.max(0, Math.min(x, 1150));
-        y = Math.max(0, Math.min(y, 650));
+        x = Math.max(
+          0,
+          Math.min(x, 1150)
+        );
 
-        // Collision
+        y = Math.max(
+          0,
+          Math.min(y, 650)
+        );
+
         if (checkCollision(x, y)) {
           return prev;
         }
 
-        // Send movement
         if (socket.connected) {
-          socket.emit("avatar:move", {
-            userId,
-            x,
-            y,
-          });
+          socket.emit(
+            "avatar:move",
+            {
+              userId,
+              x,
+              y,
+            }
+          );
         }
 
         return {
@@ -226,7 +288,10 @@ function OfficeCanvas() {
       });
     };
 
-    window.addEventListener("keydown", handleKey);
+    window.addEventListener(
+      "keydown",
+      handleKey
+    );
 
     return () => {
       window.removeEventListener(
@@ -236,10 +301,25 @@ function OfficeCanvas() {
     };
   }, [userId]);
 
-  // Other users only
+  // ================= USERS =================
+
   const otherUsers = users.filter(
-    (user) => user.userId !== userId
+    (user) =>
+      user.userId !== userId
   );
+
+  // ================= CHAT =================
+
+  const handleSendMessage = (message) => {
+    console.log(
+      "Chat message:",
+      message
+    );
+
+    // Temporary UI test
+    // Real Socket.io chat will be connected
+    // after confirming friend's backend event.
+  };
 
   return (
     <div className="flex-1 relative overflow-hidden bg-slate-900 pb-16 lg:pb-0">
@@ -274,9 +354,11 @@ function OfficeCanvas() {
 
       <div className="absolute inset-0 bg-gradient-to-br from-white/5 via-transparent to-black/10 pointer-events-none" />
 
-      {/* ================= ONLINE USERS PANEL ================= */}
+      {/* ================= ONLINE USERS ================= */}
 
-      <OnlineUsers users={otherUsers} />
+      <OnlineUsers
+        users={otherUsers}
+      />
 
       {/* ================= FURNITURE ================= */}
 
@@ -290,28 +372,47 @@ function OfficeCanvas() {
         name={username}
       />
 
-      {/* ================= OTHER ONLINE USERS ================= */}
+      {/* ================= OTHER USERS ================= */}
 
       {otherUsers.map((user) => (
         <Avatar
           key={user.userId}
-          x={user.position?.x ?? 400}
-          y={user.position?.y ?? 300}
+          x={
+            user.position?.x ??
+            400
+          }
+          y={
+            user.position?.y ??
+            300
+          }
           name={user.name}
         />
       ))}
+
+      {/* ================= CHAT ================= */}
+
+      <ChatBox
+        messages={[]}
+        onSend={handleSendMessage}
+      />
 
       {/* ================= MINI MAP ================= */}
 
       <div className="hidden lg:block">
         <MiniMap
           position={position}
-          users={otherUsers.map((user) => ({
-            id: user.userId,
-            x: user.position?.x ?? 400,
-            y: user.position?.y ?? 300,
-            name: user.name,
-          }))}
+          users={otherUsers.map(
+            (user) => ({
+              id: user.userId,
+              x:
+                user.position?.x ??
+                400,
+              y:
+                user.position?.y ??
+                300,
+              name: user.name,
+            })
+          )}
         />
       </div>
 
