@@ -1,21 +1,39 @@
-require("dotenv").config({ path: "./server/.env"});
+require("dotenv").config();
 
 const connectDB = require("./config/db");
 const { findNearbyUsers } = require("./proximity");
 
 const test = async () => {
-  await connectDB();
+  try {
+    await connectDB();
 
-  const users = await findNearbyUsers(
-    "test-user",
-    400,
-    300,
-    100
-  );
+    console.log("Testing MongoDB proximity query...");
 
-  console.log("Nearby users:", users);
+    const users = await findNearbyUsers(
+      "test-user",
+      400,
+      300,
+      100
+    );
 
-  process.exit(0);
+    console.log("Nearby users:");
+
+    users.forEach((user) => {
+      console.log({
+        userId: user.userId,
+        name: user.name,
+        position: user.position,
+        location: user.location
+      });
+    });
+
+    console.log(`Total nearby users: ${users.length}`);
+
+    process.exit(0);
+  } catch (error) {
+    console.error("Proximity test failed:", error);
+    process.exit(1);
+  }
 };
 
 test();

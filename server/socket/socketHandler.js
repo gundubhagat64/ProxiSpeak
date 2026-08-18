@@ -34,9 +34,9 @@ const setupSocket = (io) => {
             },
 
             location: {
-              type: "Point",
-              coordinates: [x / 10, y / 10]
-            },
+            type: "Point",
+            coordinates: [x / 10, y / 10]
+          },
 
             isOnline: true
           },
@@ -98,11 +98,10 @@ const setupSocket = (io) => {
               y
             },
 
-            // GeoJSON Point
             location: {
-              type: "Point",
-              coordinates: [x / 10, y / 10]
-            }
+            type: "Point",
+            coordinates: [x / 10, y / 10]
+          }
           },
           {
             new: true
