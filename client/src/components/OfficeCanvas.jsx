@@ -4,6 +4,7 @@ import Furniture from "./Furniture";
 import MiniMap from "./MiniMap";
 import OnlineUsers from "./OnlineUsers";
 import ChatBox from "./ChatBox";
+import ProximityVoice from "./ProximityVoice";
 import socket from "../socket";
 
 function OfficeCanvas() {
@@ -256,6 +257,7 @@ function OfficeCanvas() {
           x += speed;
         }
 
+        // Canvas boundary
         x = Math.max(
           0,
           Math.min(x, 1150)
@@ -266,10 +268,12 @@ function OfficeCanvas() {
           Math.min(y, 650)
         );
 
+        // Collision
         if (checkCollision(x, y)) {
           return prev;
         }
 
+        // Send movement
         if (socket.connected) {
           socket.emit(
             "avatar:move",
@@ -315,11 +319,18 @@ function OfficeCanvas() {
       "Chat message:",
       message
     );
-
-    // Temporary UI test
-    // Real Socket.io chat will be connected
-    // after confirming friend's backend event.
   };
+
+  // ================= PROXIMITY TEST =================
+  // Temporary dummy user for UI testing.
+  // Later this will come from actual proximity detection.
+
+  const nearbyUsers = [
+    {
+      userId: "test-user",
+      name: "Rahul",
+    },
+  ];
 
   return (
     <div className="flex-1 relative overflow-hidden bg-slate-900 pb-16 lg:pb-0">
@@ -394,6 +405,13 @@ function OfficeCanvas() {
       <ChatBox
         messages={[]}
         onSend={handleSendMessage}
+        username={username}
+      />
+
+      {/* ================= PROXIMITY VOICE ================= */}
+
+      <ProximityVoice
+        nearbyUsers={nearbyUsers}
       />
 
       {/* ================= MINI MAP ================= */}
