@@ -27,10 +27,17 @@ const setupSocket = (io) => {
             socketId: socket.id,
             userId,
             name,
+
             position: {
               x,
               y
             },
+
+            location: {
+            type: "Point",
+            coordinates: [x / 10, y / 10]
+          },
+
             isOnline: true
           },
           {
@@ -89,7 +96,12 @@ const setupSocket = (io) => {
             position: {
               x,
               y
-            }
+            },
+
+            location: {
+            type: "Point",
+            coordinates: [x / 10, y / 10]
+          }
           },
           {
             new: true
@@ -102,6 +114,7 @@ const setupSocket = (io) => {
 
         socket.broadcast.emit("avatar:moved", {
           userId: user.userId,
+
           position: {
             x: user.position.x,
             y: user.position.y
