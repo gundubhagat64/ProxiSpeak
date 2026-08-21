@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+
 import Avatar from "./Avatar";
 import Furniture from "./Furniture";
 import MiniMap from "./MiniMap";
@@ -30,7 +31,12 @@ function OfficeCanvas() {
     return id;
   });
 
-  // Obstacles
+  // ================= PROXIMITY SETTINGS =================
+
+  const PROXIMITY_RADIUS = 150;
+
+  // ================= OBSTACLES =================
+
   const obstacles = [
     {
       x: 350,
@@ -52,7 +58,8 @@ function OfficeCanvas() {
     },
   ];
 
-  // Collision Detection
+  // ================= COLLISION DETECTION =================
+
   const checkCollision = (x, y) => {
     const avatarSize = 40;
 
@@ -98,7 +105,10 @@ function OfficeCanvas() {
     };
 
     const handleUserJoined = (user) => {
-      console.log("User joined:", user);
+      console.log(
+        "User joined:",
+        user
+      );
 
       setUsers((prev) => {
         const exists = prev.some(
@@ -312,6 +322,33 @@ function OfficeCanvas() {
       user.userId !== userId
   );
 
+  // ================= PROXIMITY =================
+
+  const nearbyUsers = otherUsers.filter(
+    (user) => {
+      const userX =
+        user.position?.x ?? 400;
+
+      const userY =
+        user.position?.y ?? 300;
+
+      const distance = Math.sqrt(
+        Math.pow(
+          position.x - userX,
+          2
+        ) +
+          Math.pow(
+            position.y - userY,
+            2
+          )
+      );
+
+      return (
+        distance <= PROXIMITY_RADIUS
+      );
+    }
+  );
+
   // ================= CHAT =================
 
   const handleSendMessage = (message) => {
@@ -320,17 +357,6 @@ function OfficeCanvas() {
       message
     );
   };
-
-  // ================= PROXIMITY TEST =================
-  // Temporary dummy user for UI testing.
-  // Later this will come from actual proximity detection.
-
-  const nearbyUsers = [
-    {
-      userId: "test-user",
-      name: "Rahul",
-    },
-  ];
 
   return (
     <div className="flex-1 relative overflow-hidden bg-slate-900 pb-16 lg:pb-0">
@@ -361,7 +387,7 @@ function OfficeCanvas() {
         }}
       />
 
-      {/* Floor Lighting */}
+      {/* ================= FLOOR LIGHTING ================= */}
 
       <div className="absolute inset-0 bg-gradient-to-br from-white/5 via-transparent to-black/10 pointer-events-none" />
 
