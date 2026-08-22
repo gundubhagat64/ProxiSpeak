@@ -14,26 +14,27 @@ const server = http.createServer(app);
 
 const PORT = process.env.PORT || 5000;
 
+const corsOptions = {
+  origin: true,
+  credentials: true,
+};
+
 const io = new Server(server, {
   cors: {
-    origin: process.env.CLIENT_URL || "http://localhost:5173",
-    methods: ["GET", "POST"]
-  }
+    origin: true,
+    credentials: true,
+    methods: ["GET", "POST"],
+  },
 });
 
-app.use(
-  cors({
-    origin: process.env.CLIENT_URL || "http://localhost:5173"
-  })
-);
-
+app.use(cors(corsOptions));
 app.use(express.json());
 
 app.get("/", (req, res) => {
   res.json({
     name: "ProxiSpeak",
     status: "online",
-    service: "Real-time Geospatial Audio Backend"
+    service: "Real-time Geospatial Audio Backend",
   });
 });
 
@@ -42,15 +43,20 @@ app.use("/api/users", userRoutes);
 setupSocket(io);
 
 const startServer = async () => {
-  await connectDB();
+  try {
+    await connectDB();
 
-  server.listen(PORT, () => {
-    console.log("--------------------------------------");
-    console.log("ProxiSpeak backend started");
-    console.log(`HTTP: http://localhost:${PORT}`);
-    console.log(`Socket.IO: ws://localhost:${PORT}`);
-    console.log("--------------------------------------");
-  });
+    server.listen(PORT, () => {
+      console.log("--------------------------------------");
+      console.log("ProxiSpeak backend started");
+      console.log(`HTTP: http://localhost:${PORT}`);
+      console.log(`Socket.IO: ws://localhost:${PORT}`);
+      console.log("--------------------------------------");
+    });
+  } catch (error) {
+    console.error("Failed to start server:", error);
+    process.exit(1);
+  }
 };
 
 startServer();

@@ -1,5 +1,15 @@
 const User = require("../models/User");
 
+const WORLD_WIDTH = 1150;
+const WORLD_HEIGHT = 650;
+
+const pixelToGeo = (x, y) => {
+  const longitude = (x / WORLD_WIDTH) * 360 - 180;
+  const latitude = 90 - (y / WORLD_HEIGHT) * 180;
+
+  return [longitude, latitude];
+};
+
 const setupSocket = (io) => {
   io.on("connection", (socket) => {
     console.log(`Socket connected: ${socket.id}`);
@@ -9,8 +19,8 @@ const setupSocket = (io) => {
         const {
           userId,
           name,
-          x = 400,
-          y = 300
+          x = 200,
+          y = 150
         } = data;
 
         if (!userId || !name) {
@@ -27,10 +37,17 @@ const setupSocket = (io) => {
             socketId: socket.id,
             userId,
             name,
+
             position: {
               x,
               y
             },
+
+            location: {
+              type: "Point",
+              coordinates: pixelToGeo(x, y)
+            },
+
             isOnline: true
           },
           {
@@ -75,7 +92,11 @@ const setupSocket = (io) => {
         if (
           !userId ||
           typeof x !== "number" ||
-          typeof y !== "number"
+          typeof y !== "number" ||
+          x < 0 ||
+          x > WORLD_WIDTH ||
+          y < 0 ||
+          y > WORLD_HEIGHT
         ) {
           return;
         }
@@ -89,6 +110,11 @@ const setupSocket = (io) => {
             position: {
               x,
               y
+            },
+
+            location: {
+              type: "Point",
+              coordinates: pixelToGeo(x, y)
             }
           },
           {

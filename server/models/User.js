@@ -13,14 +13,14 @@ const userSchema = new mongoose.Schema(
       required: true,
       unique: true
     },
-
+// Add the name field to store the user's name
     name: {
       type: String,
       required: true,
       trim: true,
       maxlength: 50
     },
-
+// Add the position field to store the user's position on the map
     position: {
       x: {
         type: Number,
@@ -31,7 +31,7 @@ const userSchema = new mongoose.Schema(
         default: 300
       }
     },
-
+// Add the location field to store the user's geographical location
     location: {
       type: {
         type: String,
@@ -42,7 +42,7 @@ const userSchema = new mongoose.Schema(
         default: [0, 0]
       }
     },
-
+ // Add the isOnline field to track the user's online status
     isOnline: {
       type: Boolean,
       default: true
