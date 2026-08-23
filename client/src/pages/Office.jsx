@@ -6,21 +6,34 @@ import socket from "../socket";
 
 function Office() {
   useEffect(() => {
-    socket.connect();
+    if (!socket.connected) {
+      socket.connect();
+    }
 
-    socket.on("connect", () => {
+    const handleConnect = () => {
       console.log("✅ Socket connected");
       console.log("🆔 Socket ID:", socket.id);
-    });
+    };
 
-    socket.on("connect_error", (error) => {
-      console.error("❌ Socket connection error:", error.message);
-    });
+    const handleConnectError = (error) => {
+      console.error(
+        "❌ Socket connection error:",
+        error.message
+      );
+    };
+
+    socket.on("connect", handleConnect);
+    socket.on(
+      "connect_error",
+      handleConnectError
+    );
 
     return () => {
-      socket.off("connect");
-      socket.off("connect_error");
-      socket.disconnect();
+      socket.off("connect", handleConnect);
+      socket.off(
+        "connect_error",
+        handleConnectError
+      );
     };
   }, []);
 

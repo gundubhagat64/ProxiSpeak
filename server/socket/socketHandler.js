@@ -1,5 +1,8 @@
 const User = require("../models/User");
-const { pixelToGeo } = require("../proximity");
+const {
+  pixelToGeo,
+  findNearbyUsers
+} = require("../proximity");
 
 const WORLD_WIDTH = 1150;
 const WORLD_HEIGHT = 650;
@@ -79,59 +82,84 @@ const setupSocket = (io) => {
       }
     });
 
-    socket.on("avatar:move", async (data) => {
-      try {
-        const { userId, x, y } = data;
+   socket.on("avatar:move", async (data) => {
+  try {
+    const { userId, x, y } = data;
 
-        if (
-          !userId ||
-          typeof x !== "number" ||
-          typeof y !== "number" ||
-          x < 0 ||
-          x > WORLD_WIDTH ||
-          y < 0 ||
-          y > WORLD_HEIGHT
-        ) {
-          return;
+    if (
+      !userId ||
+      typeof x !== "number" ||
+      typeof y !== "number" ||
+      x < 0 ||
+      x > WORLD_WIDTH ||
+      y < 0 ||
+      y > WORLD_HEIGHT
+    ) {
+      return;
+    }
+
+    // Update user's position in MongoDB
+    const user = await User.findOneAndUpdate(
+      {
+        userId,
+        socketId: socket.id
+      },
+      {
+        position: {
+          x,
+          y
+        },
+
+        location: {
+          type: "Point",
+          coordinates: pixelToGeo(x, y)
         }
+      },
+      {
+        new: true
+      }
+    );
 
-        const user = await User.findOneAndUpdate(
-          {
-            userId,
-            socketId: socket.id
-          },
-          {
-            position: {
-              x,
-              y
-            },
+    if (!user) {
+      return;
+    }
 
-            location: {
-              type: "Point",
-              coordinates: pixelToGeo(x, y)
-            }
-          },
-          {
-            new: true
-          }
-        );
+    // Broadcast movement to other users
+    socket.broadcast.emit("avatar:moved", {
+      userId: user.userId,
 
-        if (!user) {
-          return;
-        }
-
-        socket.broadcast.emit("avatar:moved", {
-          userId: user.userId,
-
-          position: {
-            x: user.position.x,
-            y: user.position.y
-          }
-        });
-      } catch (error) {
-        console.error("Movement error:", error.message);
+      position: {
+        x: user.position.x,
+        y: user.position.y
       }
     });
+
+    // Find users within 100 pixels
+    const nearbyUsers = await findNearbyUsers(
+      user.userId,
+      x,
+      y,
+      100
+    );
+
+    // Send proximity information to the moving user
+    socket.emit("proximity:update", {
+      userId: user.userId,
+
+      nearbyUsers: nearbyUsers.map((nearbyUser) => ({
+        userId: nearbyUser.userId,
+        name: nearbyUser.name,
+        position: nearbyUser.position
+      }))
+    });
+
+    console.log(
+      `${user.name} has ${nearbyUsers.length} nearby users`
+    );
+  } catch (error) {
+    console.error("Movement error:", error.message);
+  }
+});
 
     socket.on("disconnect", async () => {
       try {

@@ -16,6 +16,9 @@ function OfficeCanvas() {
 
   const [users, setUsers] = useState([]);
 
+  // Users detected by the backend MongoDB proximity query
+  const [nearbyUsers, setNearbyUsers] = useState([]);
+
   const username =
     localStorage.getItem("username") || "Guest";
 
@@ -30,10 +33,6 @@ function OfficeCanvas() {
 
     return id;
   });
-
-  // ================= PROXIMITY SETTINGS =================
-
-  const PROXIMITY_RADIUS = 150;
 
   // ================= OBSTACLES =================
 
@@ -77,10 +76,7 @@ function OfficeCanvas() {
 
   useEffect(() => {
     const handleConnect = () => {
-      console.log(
-        "Socket connected:",
-        socket.id
-      );
+      console.log("Socket connected:", socket.id);
 
       socket.emit("user:join", {
         userId,
@@ -89,26 +85,24 @@ function OfficeCanvas() {
         y: position.y,
       });
 
-      console.log(
-        "Join request sent:",
-        username
+      console.log("Join request sent:", username);
+    };
+
+    const handleConnectError = (error) => {
+      console.error(
+        "❌ Socket connection error:",
+        error.message
       );
     };
 
     const handleUsersList = (onlineUsers) => {
-      console.log(
-        "Online users:",
-        onlineUsers
-      );
+      console.log("Online users:", onlineUsers);
 
       setUsers(onlineUsers);
     };
 
     const handleUserJoined = (user) => {
-      console.log(
-        "User joined:",
-        user
-      );
+      console.log("User joined:", user);
 
       setUsers((prev) => {
         const exists = prev.some(
@@ -137,6 +131,19 @@ function OfficeCanvas() {
       );
     };
 
+    // ================= WEEK 2 PROXIMITY =================
+
+    const handleProximityUpdate = (data) => {
+      console.log(
+        "📍 Proximity update:",
+        data
+      );
+
+      setNearbyUsers(
+        data.nearbyUsers || []
+      );
+    };
+
     const handleUserLeft = (data) => {
       console.log(
         "User left:",
@@ -144,6 +151,14 @@ function OfficeCanvas() {
       );
 
       setUsers((prev) =>
+        prev.filter(
+          (user) =>
+            user.userId !== data.userId
+        )
+      );
+
+      // Remove the user from proximity list
+      setNearbyUsers((prev) =>
         prev.filter(
           (user) =>
             user.userId !== data.userId
@@ -164,6 +179,11 @@ function OfficeCanvas() {
     );
 
     socket.on(
+      "connect_error",
+      handleConnectError
+    );
+
+    socket.on(
       "users:list",
       handleUsersList
     );
@@ -176,6 +196,11 @@ function OfficeCanvas() {
     socket.on(
       "avatar:moved",
       handleAvatarMoved
+    );
+
+    socket.on(
+      "proximity:update",
+      handleProximityUpdate
     );
 
     socket.on(
@@ -201,6 +226,11 @@ function OfficeCanvas() {
       );
 
       socket.off(
+        "connect_error",
+        handleConnectError
+      );
+
+      socket.off(
         "users:list",
         handleUsersList
       );
@@ -213,6 +243,11 @@ function OfficeCanvas() {
       socket.off(
         "avatar:moved",
         handleAvatarMoved
+      );
+
+      socket.off(
+        "proximity:update",
+        handleProximityUpdate
       );
 
       socket.off(
@@ -278,12 +313,12 @@ function OfficeCanvas() {
           Math.min(y, 650)
         );
 
-        // Collision
+        // Collision detection
         if (checkCollision(x, y)) {
           return prev;
         }
 
-        // Send movement
+        // Send movement to backend
         if (socket.connected) {
           socket.emit(
             "avatar:move",
@@ -322,33 +357,6 @@ function OfficeCanvas() {
       user.userId !== userId
   );
 
-  // ================= PROXIMITY =================
-
-  const nearbyUsers = otherUsers.filter(
-    (user) => {
-      const userX =
-        user.position?.x ?? 400;
-
-      const userY =
-        user.position?.y ?? 300;
-
-      const distance = Math.sqrt(
-        Math.pow(
-          position.x - userX,
-          2
-        ) +
-          Math.pow(
-            position.y - userY,
-            2
-          )
-      );
-
-      return (
-        distance <= PROXIMITY_RADIUS
-      );
-    }
-  );
-
   // ================= CHAT =================
 
   const handleSendMessage = (message) => {
@@ -357,6 +365,8 @@ function OfficeCanvas() {
       message
     );
   };
+
+  // ================= UI =================
 
   return (
     <div className="flex-1 relative overflow-hidden bg-slate-900 pb-16 lg:pb-0">
