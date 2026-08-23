@@ -1,14 +1,8 @@
 const User = require("../models/User");
+const { pixelToGeo } = require("../proximity");
 
 const WORLD_WIDTH = 1150;
 const WORLD_HEIGHT = 650;
-
-const pixelToGeo = (x, y) => {
-  const longitude = (x / WORLD_WIDTH) * 360 - 180;
-  const latitude = 90 - (y / WORLD_HEIGHT) * 180;
-
-  return [longitude, latitude];
-};
 
 const setupSocket = (io) => {
   io.on("connection", (socket) => {
