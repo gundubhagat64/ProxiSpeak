@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
+
 import Avatar from "./Avatar";
 import Furniture from "./Furniture";
 import MiniMap from "./MiniMap";
 import OnlineUsers from "./OnlineUsers";
 import ChatBox from "./ChatBox";
+import ProximityVoice from "./ProximityVoice";
 import socket from "../socket";
 
 function OfficeCanvas() {
@@ -29,7 +31,12 @@ function OfficeCanvas() {
     return id;
   });
 
-  // Obstacles
+  // ================= PROXIMITY SETTINGS =================
+
+  const PROXIMITY_RADIUS = 150;
+
+  // ================= OBSTACLES =================
+
   const obstacles = [
     {
       x: 350,
@@ -51,7 +58,8 @@ function OfficeCanvas() {
     },
   ];
 
-  // Collision Detection
+  // ================= COLLISION DETECTION =================
+
   const checkCollision = (x, y) => {
     const avatarSize = 40;
 
@@ -97,7 +105,10 @@ function OfficeCanvas() {
     };
 
     const handleUserJoined = (user) => {
-      console.log("User joined:", user);
+      console.log(
+        "User joined:",
+        user
+      );
 
       setUsers((prev) => {
         const exists = prev.some(
@@ -256,6 +267,7 @@ function OfficeCanvas() {
           x += speed;
         }
 
+        // Canvas boundary
         x = Math.max(
           0,
           Math.min(x, 1150)
@@ -266,10 +278,12 @@ function OfficeCanvas() {
           Math.min(y, 650)
         );
 
+        // Collision
         if (checkCollision(x, y)) {
           return prev;
         }
 
+        // Send movement
         if (socket.connected) {
           socket.emit(
             "avatar:move",
@@ -308,6 +322,33 @@ function OfficeCanvas() {
       user.userId !== userId
   );
 
+  // ================= PROXIMITY =================
+
+  const nearbyUsers = otherUsers.filter(
+    (user) => {
+      const userX =
+        user.position?.x ?? 400;
+
+      const userY =
+        user.position?.y ?? 300;
+
+      const distance = Math.sqrt(
+        Math.pow(
+          position.x - userX,
+          2
+        ) +
+          Math.pow(
+            position.y - userY,
+            2
+          )
+      );
+
+      return (
+        distance <= PROXIMITY_RADIUS
+      );
+    }
+  );
+
   // ================= CHAT =================
 
   const handleSendMessage = (message) => {
@@ -315,10 +356,6 @@ function OfficeCanvas() {
       "Chat message:",
       message
     );
-
-    // Temporary UI test
-    // Real Socket.io chat will be connected
-    // after confirming friend's backend event.
   };
 
   return (
@@ -350,7 +387,7 @@ function OfficeCanvas() {
         }}
       />
 
-      {/* Floor Lighting */}
+      {/* ================= FLOOR LIGHTING ================= */}
 
       <div className="absolute inset-0 bg-gradient-to-br from-white/5 via-transparent to-black/10 pointer-events-none" />
 
@@ -394,6 +431,13 @@ function OfficeCanvas() {
       <ChatBox
         messages={[]}
         onSend={handleSendMessage}
+        username={username}
+      />
+
+      {/* ================= PROXIMITY VOICE ================= */}
+
+      <ProximityVoice
+        nearbyUsers={nearbyUsers}
       />
 
       {/* ================= MINI MAP ================= */}

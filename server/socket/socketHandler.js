@@ -128,6 +128,7 @@ const setupSocket = (io) => {
 
         socket.broadcast.emit("avatar:moved", {
           userId: user.userId,
+
           position: {
             x: user.position.x,
             y: user.position.y
