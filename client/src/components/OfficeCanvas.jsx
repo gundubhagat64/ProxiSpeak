@@ -6,6 +6,7 @@ import MiniMap from "./MiniMap";
 import OnlineUsers from "./OnlineUsers";
 import ChatBox from "./ChatBox";
 import ProximityVoice from "./ProximityVoice";
+import VoiceControls from "./VoiceControls";
 import socket from "../socket";
 
 function OfficeCanvas() {
@@ -16,7 +17,7 @@ function OfficeCanvas() {
 
   const [users, setUsers] = useState([]);
 
-  // Users detected by the backend MongoDB proximity query
+  // Users detected by backend proximity query
   const [nearbyUsers, setNearbyUsers] = useState([]);
 
   const username =
@@ -76,7 +77,10 @@ function OfficeCanvas() {
 
   useEffect(() => {
     const handleConnect = () => {
-      console.log("Socket connected:", socket.id);
+      console.log(
+        "Socket connected:",
+        socket.id
+      );
 
       socket.emit("user:join", {
         userId,
@@ -85,7 +89,10 @@ function OfficeCanvas() {
         y: position.y,
       });
 
-      console.log("Join request sent:", username);
+      console.log(
+        "Join request sent:",
+        username
+      );
     };
 
     const handleConnectError = (error) => {
@@ -96,13 +103,19 @@ function OfficeCanvas() {
     };
 
     const handleUsersList = (onlineUsers) => {
-      console.log("Online users:", onlineUsers);
+      console.log(
+        "Online users:",
+        onlineUsers
+      );
 
       setUsers(onlineUsers);
     };
 
     const handleUserJoined = (user) => {
-      console.log("User joined:", user);
+      console.log(
+        "User joined:",
+        user
+      );
 
       setUsers((prev) => {
         const exists = prev.some(
@@ -131,7 +144,7 @@ function OfficeCanvas() {
       );
     };
 
-    // ================= WEEK 2 PROXIMITY =================
+    // ================= PROXIMITY =================
 
     const handleProximityUpdate = (data) => {
       console.log(
@@ -157,7 +170,6 @@ function OfficeCanvas() {
         )
       );
 
-      // Remove the user from proximity list
       setNearbyUsers((prev) =>
         prev.filter(
           (user) =>
@@ -173,6 +185,7 @@ function OfficeCanvas() {
       );
     };
 
+    // Register listeners
     socket.on(
       "connect",
       handleConnect
@@ -213,12 +226,14 @@ function OfficeCanvas() {
       handleServerError
     );
 
+    // Connect
     if (!socket.connected) {
       socket.connect();
     } else {
       handleConnect();
     }
 
+    // Cleanup
     return () => {
       socket.off(
         "connect",
@@ -313,12 +328,12 @@ function OfficeCanvas() {
           Math.min(y, 650)
         );
 
-        // Collision detection
+        // Collision
         if (checkCollision(x, y)) {
           return prev;
         }
 
-        // Send movement to backend
+        // Send movement
         if (socket.connected) {
           socket.emit(
             "avatar:move",
@@ -397,7 +412,7 @@ function OfficeCanvas() {
         }}
       />
 
-      {/* ================= FLOOR LIGHTING ================= */}
+      {/* Floor Lighting */}
 
       <div className="absolute inset-0 bg-gradient-to-br from-white/5 via-transparent to-black/10 pointer-events-none" />
 
@@ -449,6 +464,10 @@ function OfficeCanvas() {
       <ProximityVoice
         nearbyUsers={nearbyUsers}
       />
+
+      {/* ================= VOICE CONTROLS ================= */}
+
+      <VoiceControls />
 
       {/* ================= MINI MAP ================= */}
 
