@@ -20,6 +20,9 @@ function OfficeCanvas() {
   // Users detected by backend proximity query
   const [nearbyUsers, setNearbyUsers] = useState([]);
 
+  // Chat messages
+  const [messages, setMessages] = useState([]);
+
   const username =
     localStorage.getItem("username") || "Guest";
 
@@ -157,6 +160,21 @@ function OfficeCanvas() {
       );
     };
 
+    // ================= CHAT RECEIVE =================
+    // Ready for backend chat:receive event
+
+    const handleChatReceive = (message) => {
+      console.log(
+        "💬 Chat message received:",
+        message
+      );
+
+      setMessages((prev) => [
+        ...prev,
+        message,
+      ]);
+    };
+
     const handleUserLeft = (data) => {
       console.log(
         "User left:",
@@ -185,7 +203,8 @@ function OfficeCanvas() {
       );
     };
 
-    // Register listeners
+    // ================= REGISTER LISTENERS =================
+
     socket.on(
       "connect",
       handleConnect
@@ -214,6 +233,11 @@ function OfficeCanvas() {
     socket.on(
       "proximity:update",
       handleProximityUpdate
+    );
+
+    socket.on(
+      "chat:receive",
+      handleChatReceive
     );
 
     socket.on(
@@ -263,6 +287,11 @@ function OfficeCanvas() {
       socket.off(
         "proximity:update",
         handleProximityUpdate
+      );
+
+      socket.off(
+        "chat:receive",
+        handleChatReceive
       );
 
       socket.off(
@@ -375,9 +404,38 @@ function OfficeCanvas() {
   // ================= CHAT =================
 
   const handleSendMessage = (message) => {
+    const text = message.trim();
+
+    if (!text) {
+      return;
+    }
+
+    const newMessage = {
+      id: crypto.randomUUID(),
+      userId,
+      name: username,
+      text,
+      timestamp:
+        new Date().toISOString(),
+    };
+
+    // Show message immediately in our own UI
+    setMessages((prev) => [
+      ...prev,
+      newMessage,
+    ]);
+
+    // Send to backend when chat event is available
+    if (socket.connected) {
+      socket.emit(
+        "chat:send",
+        newMessage
+      );
+    }
+
     console.log(
-      "Chat message:",
-      message
+      "💬 Chat message:",
+      newMessage
     );
   };
 
@@ -454,7 +512,7 @@ function OfficeCanvas() {
       {/* ================= CHAT ================= */}
 
       <ChatBox
-        messages={[]}
+        messages={messages}
         onSend={handleSendMessage}
         username={username}
       />
