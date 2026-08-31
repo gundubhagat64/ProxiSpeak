@@ -4,6 +4,13 @@ const express = require("express");
 const http = require("http");
 const cors = require("cors");
 const { Server } = require("socket.io");
+const { createAdapter } = require("@socket.io/redis-adapter");
+
+const {
+  pubClient,
+  subClient,
+  connectRedis
+} = require("./config/redis");
 
 const connectDB = require("./config/db");
 
@@ -28,6 +35,9 @@ const io = new Server(server, {
   },
 });
 
+// Redis adapter for multiple Socket.IO servers
+io.adapter(createAdapter(pubClient, subClient));
+
 app.use(cors(corsOptions));
 app.use(express.json());
 
@@ -46,6 +56,7 @@ setupSocket(io);
 const startServer = async () => {
   try {
     await connectDB();
+    await connectRedis();
 
     server.listen(PORT, () => {
       console.log("--------------------------------------");
