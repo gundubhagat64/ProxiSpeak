@@ -161,7 +161,6 @@ function OfficeCanvas() {
     };
 
     // ================= CHAT RECEIVE =================
-    // Ready for backend chat:receive event
 
     const handleChatReceive = (message) => {
       console.log(
@@ -174,6 +173,8 @@ function OfficeCanvas() {
         message,
       ]);
     };
+
+    // ================= USER LEFT =================
 
     const handleUserLeft = (data) => {
       console.log(
@@ -195,6 +196,8 @@ function OfficeCanvas() {
         )
       );
     };
+
+    // ================= SERVER ERROR =================
 
     const handleServerError = (data) => {
       console.error(
@@ -250,14 +253,16 @@ function OfficeCanvas() {
       handleServerError
     );
 
-    // Connect
+    // ================= CONNECT =================
+
     if (!socket.connected) {
       socket.connect();
     } else {
       handleConnect();
     }
 
-    // Cleanup
+    // ================= CLEANUP =================
+
     return () => {
       socket.off(
         "connect",
@@ -419,13 +424,13 @@ function OfficeCanvas() {
         new Date().toISOString(),
     };
 
-    // Show message immediately in our own UI
+    // Show message immediately
     setMessages((prev) => [
       ...prev,
       newMessage,
     ]);
 
-    // Send to backend when chat event is available
+    // Send message to backend
     if (socket.connected) {
       socket.emit(
         "chat:send",
@@ -506,6 +511,11 @@ function OfficeCanvas() {
             300
           }
           name={user.name}
+          isNearby={nearbyUsers.some(
+            (nearbyUser) =>
+              nearbyUser.userId ===
+              user.userId
+          )}
         />
       ))}
 
