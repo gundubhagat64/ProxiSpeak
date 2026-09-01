@@ -1,10 +1,9 @@
 const { createClient } = require("redis");
 
-const redisUrl =
-  process.env.REDIS_URL || "redis://localhost:6379";
+const redisUrl = process.env.REDIS_URL;
 
 const pubClient = createClient({
-  url: redisUrl
+  url: redisUrl,
 });
 
 const subClient = pubClient.duplicate();
@@ -18,10 +17,16 @@ subClient.on("error", (error) => {
 });
 
 const connectRedis = async () => {
-  await pubClient.connect();
-  await subClient.connect();
+  try {
+    await pubClient.connect();
+    await subClient.connect();
 
-  console.log("Redis connected");
+    console.log("Redis connected");
+    return true;
+  } catch (error) {
+    console.error("Redis unavailable:", error.message);
+    return false;
+  }
 };
 
 module.exports = {
