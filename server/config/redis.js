@@ -1,31 +1,56 @@
 const { createClient } = require("redis");
 
-const redisUrl =
-  process.env.REDIS_URL || "redis://localhost:6379";
-
-const pubClient = createClient({
-  url: redisUrl
-});
-
-const subClient = pubClient.duplicate();
-
-pubClient.on("error", (error) => {
-  console.error("Redis Publisher Error:", error.message);
-});
-
-subClient.on("error", (error) => {
-  console.error("Redis Subscriber Error:", error.message);
-});
+let pubClient = null;
+let subClient = null;
 
 const connectRedis = async () => {
-  await pubClient.connect();
-  await subClient.connect();
+  const redisUrl = process.env.REDIS_URL;
 
-  console.log("Redis connected");
+  if (!redisUrl) {
+    console.log("Redis URL not configured - running without Redis");
+
+    return {
+      pubClient: null,
+      subClient: null,
+    };
+  }
+
+  try {
+    pubClient = createClient({
+      url: redisUrl,
+    });
+
+    subClient = pubClient.duplicate();
+
+    pubClient.on("error", (error) => {
+      console.error("Redis Publisher Error:", error.message);
+    });
+
+    subClient.on("error", (error) => {
+      console.error("Redis Subscriber Error:", error.message);
+    });
+
+    await Promise.all([
+      pubClient.connect(),
+      subClient.connect(),
+    ]);
+
+    console.log("Redis connected successfully");
+
+    return {
+      pubClient,
+      subClient,
+    };
+  } catch (error) {
+    console.error("Redis connection failed:", error.message);
+
+    return {
+      pubClient: null,
+      subClient: null,
+    };
+  }
 };
 
 module.exports = {
-  pubClient,
-  subClient,
-  connectRedis
+  connectRedis,
 };
