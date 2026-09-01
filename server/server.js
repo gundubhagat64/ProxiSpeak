@@ -35,9 +35,6 @@ const io = new Server(server, {
   },
 });
 
-// Redis adapter for multiple Socket.IO servers
-io.adapter(createAdapter(pubClient, subClient));
-
 app.use(cors(corsOptions));
 app.use(express.json());
 
@@ -56,7 +53,16 @@ setupSocket(io);
 const startServer = async () => {
   try {
     await connectDB();
-    await connectRedis();
+
+    const redisConnected = await connectRedis();
+
+    if (redisConnected) {
+      io.adapter(createAdapter(pubClient, subClient));
+      console.log("Socket.IO Redis adapter enabled");
+    } else {
+      console.log("Socket.IO running without Redis");
+    }
+
 
     server.listen(PORT, () => {
       console.log("--------------------------------------");
