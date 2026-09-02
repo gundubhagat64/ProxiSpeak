@@ -3,6 +3,8 @@ require("dotenv").config();
 const connectDB = require("./config/db");
 const { findNearbyUsers } = require("./proximity");
 
+// Test function to check the proximity query functionality
+
 const test = async () => {
   try {
     await connectDB();
