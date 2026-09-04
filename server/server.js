@@ -14,6 +14,7 @@ const connectDB = require("./config/db");
 
 const setupSocket = require("./socket/socketHandler");
 const userRoutes = require("./routes/userRoutes");
+const roomRoutes = require("./routes/roomRoutes");
 
 const app = express();
 const server = http.createServer(app);
@@ -53,6 +54,7 @@ app.get("/", (req, res) => {
 // Use user routes for handling user-related API endpoints
 
 app.use("/api/users", userRoutes);
+app.use("/api/rooms", roomRoutes);
 
 setupSocket(io);
 
