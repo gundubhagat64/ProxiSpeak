@@ -26,6 +26,20 @@ function OfficeCanvas() {
   const username =
     localStorage.getItem("username") || "Guest";
 
+  // ================= USER STATUS =================
+
+  const [userStatus, setUserStatus] = useState("Online");
+  const [currentTime, setCurrentTime] = useState(new Date());
+
+  // Live clock
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCurrentTime(new Date());
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, []);
+
   // Create unique user ID
   const [userId] = useState(() => {
     let id = localStorage.getItem("userId");
@@ -478,6 +492,74 @@ function OfficeCanvas() {
       {/* Floor Lighting */}
 
       <div className="absolute inset-0 bg-gradient-to-br from-white/5 via-transparent to-black/10 pointer-events-none" />
+
+      {/* ================= STATUS BAR ================= */}
+
+      <div className="absolute top-4 right-4 z-50 flex items-center gap-3">
+
+        {/* Live Clock */}
+
+        <div className="hidden sm:flex items-center gap-2 px-4 py-2 rounded-xl bg-slate-800/90 backdrop-blur-md border border-slate-700 shadow-lg">
+
+          <span className="text-sm">
+            🕐
+          </span>
+
+          <span className="text-white text-sm font-semibold">
+            {currentTime.toLocaleTimeString([], {
+              hour: "2-digit",
+              minute: "2-digit",
+              second: "2-digit",
+            })}
+          </span>
+
+        </div>
+
+        {/* User Status */}
+
+        <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-slate-800/90 backdrop-blur-md border border-slate-700 shadow-lg">
+
+          <span
+            className={`w-2.5 h-2.5 rounded-full ${
+              userStatus === "Online"
+                ? "bg-green-400"
+                : userStatus === "Busy"
+                ? "bg-red-400"
+                : "bg-yellow-400"
+            }`}
+          />
+
+          <select
+            value={userStatus}
+            onChange={(e) =>
+              setUserStatus(e.target.value)
+            }
+            className="bg-transparent text-white text-sm font-medium outline-none cursor-pointer"
+          >
+            <option
+              value="Online"
+              className="bg-slate-800"
+            >
+              Online
+            </option>
+
+            <option
+              value="Busy"
+              className="bg-slate-800"
+            >
+              Busy
+            </option>
+
+            <option
+              value="Away"
+              className="bg-slate-800"
+            >
+              Away
+            </option>
+          </select>
+
+        </div>
+      </div>
 
       {/* ================= ONLINE USERS ================= */}
 
