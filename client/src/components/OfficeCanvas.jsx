@@ -100,11 +100,12 @@ function OfficeCanvas() {
       );
 
       socket.emit("user:join", {
-        userId,
-        name: username,
-        x: position.x,
-        y: position.y,
-      });
+  userId,
+  name,
+  roomId,
+  x,
+  y
+});
 
       console.log(
         "Join request sent:",
