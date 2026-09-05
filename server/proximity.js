@@ -9,7 +9,7 @@ const pixelToGeo = (x, y) => {
   return [longitude, latitude];
 };
 
-const findNearbyUsers = async (userId, x, y, radius = 100) => {
+const findNearbyUsers = async (userId, roomId, x, y, radius = 100) => {
   try {
     const coordinates = pixelToGeo(x, y);
 
@@ -21,6 +21,7 @@ const findNearbyUsers = async (userId, x, y, radius = 100) => {
 
     const nearbyUsers = await User.find({
       userId: { $ne: userId },
+      roomId: roomId,
       isOnline: true,
       location: {
         $near: {

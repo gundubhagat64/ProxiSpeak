@@ -172,6 +172,7 @@ const setupSocket = (io) => {
                 socketId: socket.id,
                 userId,
                 name,
+                roomId,
 
                 position: {
                   x,
@@ -193,24 +194,25 @@ const setupSocket = (io) => {
               }
             );
 
-          socket.broadcast.emit(
-            "user:joined",
-            {
-              userId:
-                user.userId,
-
-              name:
-                user.name,
-
-              position:
-                user.position
-            }
-          );
+          if (roomId) {
+  socket.to(roomId).emit("user:joined", {
+    userId: user.userId,
+    name: user.name,
+    position: user.position
+  });
+} else {
+  socket.broadcast.emit("user:joined", {
+    userId: user.userId,
+    name: user.name,
+    position: user.position
+  });
+}
 
           const onlineUsers =
             await User.find(
               {
-                isOnline: true
+                isOnline: true,
+                roomId,
               },
               {
                 _id: 0,
@@ -383,6 +385,7 @@ const setupSocket = (io) => {
           const nearbyUsers =
             await findNearbyUsers(
               user.userId,
+              roomId,
               x,
               y,
               DEFAULT_PROXIMITY_RADIUS
@@ -686,14 +689,11 @@ const setupSocket = (io) => {
             );
 
           if (user) {
-            io.emit(
-              "user:left",
-              {
-                userId:
-                  user.userId
-              }
-            );
-
+            if (user.roomId) {
+  io.to(user.roomId).emit("user:left", {
+    userId: user.userId
+  });
+}
             console.log(
               `${user.name} disconnected`
             );

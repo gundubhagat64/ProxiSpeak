@@ -24,6 +24,19 @@ function ProximityVoice({
   const localStreamRef = useRef(null);
   const peersRef = useRef(new Map());
 
+  /*
+   * Server calculated spatial audio values.
+   *
+   * remoteUserId -> {
+   *   distance,
+   *   distanceGain,
+   *   obstacleGain,
+   *   finalGain,
+   *   blocked
+   * }
+   */
+  const spatialAudioRef = useRef(new Map());
+
   // -----------------------------------------
   // DISTANCE
   // -----------------------------------------
@@ -43,7 +56,7 @@ function ProximityVoice({
   };
 
   // -----------------------------------------
-  // VOLUME
+  // LOCAL FALLBACK VOLUME
   // -----------------------------------------
 
   const getVolume = (distance) => {
@@ -54,18 +67,22 @@ function ProximityVoice({
     const volume =
       1 - distance / HEARING_DISTANCE;
 
-    return Math.max(0, Math.min(1, volume));
+    return Math.max(
+      0,
+      Math.min(1, volume)
+    );
   };
 
   // -----------------------------------------
-  // UPDATE SPATIAL AUDIO
+  // APPLY AUDIO
   // -----------------------------------------
 
-  const updateSpatialAudio = (
+  const applyAudioGain = (
     remoteUserId,
     remoteUser
   ) => {
-    const peer = peersRef.current.get(remoteUserId);
+    const peer =
+      peersRef.current.get(remoteUserId);
 
     if (!peer) {
       return;
@@ -75,62 +92,167 @@ function ProximityVoice({
       return;
     }
 
-    const localX = localPosition.x || 0;
-    const localY = localPosition.y || 0;
+    const localX =
+      localPosition.x || 0;
 
-    const remoteX = remoteUser.position.x || 0;
-    const remoteY = remoteUser.position.y || 0;
+    const localY =
+      localPosition.y || 0;
 
-    const dx = remoteX - localX;
-    const dy = remoteY - localY;
+    const remoteX =
+      remoteUser.position.x || 0;
+
+    const remoteY =
+      remoteUser.position.y || 0;
+
+    const dx =
+      remoteX - localX;
+
+    const dy =
+      remoteY - localY;
 
     const distance =
-      Math.sqrt(dx * dx + dy * dy);
+      Math.sqrt(
+        dx * dx + dy * dy
+      );
 
-    // Volume based on distance
-    const volume = getVolume(distance);
+    /*
+     * Prefer server-side spatial calculation.
+     *
+     * Server:
+     * distanceGain
+     * obstacleGain
+     * finalGain
+     * blocked
+     */
 
-    if (peer.gainNode) {
-      peer.gainNode.gain.value =
-        muted ? 0 : volume;
+    const serverAudio =
+      spatialAudioRef.current.get(
+        String(remoteUserId)
+      );
+
+    let finalGain;
+
+    if (serverAudio) {
+      finalGain =
+        Number.isFinite(
+          serverAudio.finalGain
+        )
+          ? serverAudio.finalGain
+          : getVolume(distance);
+    } else {
+      /*
+       * Fallback until server sends
+       * proximity:update.
+       */
+      finalGain =
+        getVolume(distance);
     }
 
-    // -----------------------------------------
+    if (serverAudio?.blocked) {
+      finalGain = 0;
+    }
+
+    finalGain = Math.max(
+      0,
+      Math.min(1, finalGain)
+    );
+
+    if (muted) {
+      finalGain = 0;
+    }
+
+    // ---------------------------------------
+    // GAIN NODE
+    // ---------------------------------------
+
+    if (peer.gainNode) {
+      try {
+        const now =
+          peer.audioContext?.currentTime || 0;
+
+        peer.gainNode.gain.cancelScheduledValues(
+          now
+        );
+
+        peer.gainNode.gain.setTargetAtTime(
+          finalGain,
+          now,
+          0.03
+        );
+      } catch (error) {
+        peer.gainNode.gain.value =
+          finalGain;
+      }
+    }
+
+    // ---------------------------------------
     // 3D POSITION
-    // -----------------------------------------
+    // ---------------------------------------
 
     if (peer.pannerNode) {
-      const x =
+      const normalizedX =
         Math.max(
           -1,
           Math.min(
             1,
             dx / HEARING_DISTANCE
           )
-        ) * 10;
+        );
 
-      const y =
+      const normalizedY =
         Math.max(
           -1,
           Math.min(
             1,
             dy / HEARING_DISTANCE
           )
-        ) * 10;
+        );
+
+      const x =
+        normalizedX * 10;
+
+      const y =
+        normalizedY * 10;
 
       const z = 0;
 
-      if (
-        "positionX" in peer.pannerNode
-      ) {
-        peer.pannerNode.positionX.value = x;
-        peer.pannerNode.positionY.value = y;
-        peer.pannerNode.positionZ.value = z;
-      } else {
-        peer.pannerNode.setPosition(
-          x,
-          y,
-          z
+      try {
+        if (
+          "positionX" in
+          peer.pannerNode
+        ) {
+          const now =
+            peer.audioContext?.currentTime ||
+            0;
+
+          peer.pannerNode.positionX.setTargetAtTime(
+            x,
+            now,
+            0.03
+          );
+
+          peer.pannerNode.positionY.setTargetAtTime(
+            y,
+            now,
+            0.03
+          );
+
+          peer.pannerNode.positionZ.setTargetAtTime(
+            z,
+            now,
+            0.03
+          );
+        } else {
+          peer.pannerNode.setPosition(
+            x,
+            y,
+            z
+          );
+        }
+      } catch (error) {
+        console.warn(
+          "Panner update error:",
+          error
         );
       }
     }
@@ -145,7 +267,9 @@ function ProximityVoice({
     notifyServer = true
   ) => {
     const peer =
-      peersRef.current.get(remoteUserId);
+      peersRef.current.get(
+        remoteUserId
+      );
 
     if (!peer) {
       return;
@@ -154,7 +278,43 @@ function ProximityVoice({
     try {
       peer.pc.close();
     } catch (error) {
-      console.warn(error);
+      console.warn(
+        "Peer close error:",
+        error
+      );
+    }
+
+    try {
+      if (peer.source) {
+        peer.source.disconnect();
+      }
+    } catch (error) {
+      console.warn(
+        "Audio source disconnect error:",
+        error
+      );
+    }
+
+    try {
+      if (peer.pannerNode) {
+        peer.pannerNode.disconnect();
+      }
+    } catch (error) {
+      console.warn(
+        "Panner disconnect error:",
+        error
+      );
+    }
+
+    try {
+      if (peer.gainNode) {
+        peer.gainNode.disconnect();
+      }
+    } catch (error) {
+      console.warn(
+        "Gain disconnect error:",
+        error
+      );
     }
 
     try {
@@ -162,20 +322,31 @@ function ProximityVoice({
         peer.audioContext.close();
       }
     } catch (error) {
-      console.warn(error);
+      console.warn(
+        "Audio context close error:",
+        error
+      );
     }
 
     if (peer.audioElement) {
       peer.audioElement.srcObject = null;
+      peer.audioElement.remove();
     }
 
-    peersRef.current.delete(remoteUserId);
+    peersRef.current.delete(
+      remoteUserId
+    );
+
+    spatialAudioRef.current.delete(
+      String(remoteUserId)
+    );
 
     if (notifyServer) {
       socket.emit(
         "webrtc:peer-left",
         {
-          targetUserId: remoteUserId,
+          targetUserId:
+            remoteUserId,
         }
       );
     }
@@ -194,9 +365,10 @@ function ProximityVoice({
       return null;
     }
 
-    // Don't create duplicate connection
     if (
-      peersRef.current.has(remoteUserId)
+      peersRef.current.has(
+        remoteUserId
+      )
     ) {
       return peersRef.current.get(
         remoteUserId
@@ -213,9 +385,9 @@ function ProximityVoice({
         ICE_SERVERS
       );
 
-    // -----------------------------------------
-    // LOCAL AUDIO TRACK
-    // -----------------------------------------
+    // ---------------------------------------
+    // LOCAL AUDIO
+    // ---------------------------------------
 
     localStreamRef.current
       .getTracks()
@@ -226,9 +398,9 @@ function ProximityVoice({
         );
       });
 
-    // -----------------------------------------
+    // ---------------------------------------
     // AUDIO CONTEXT
-    // -----------------------------------------
+    // ---------------------------------------
 
     const audioContext =
       new AudioContext();
@@ -239,39 +411,52 @@ function ProximityVoice({
     const pannerNode =
       audioContext.createPanner();
 
-    pannerNode.panningModel = "HRTF";
-    pannerNode.distanceModel = "inverse";
+    pannerNode.panningModel =
+      "HRTF";
+
+    pannerNode.distanceModel =
+      "linear";
 
     pannerNode.refDistance = 1;
+
     pannerNode.maxDistance =
       HEARING_DISTANCE;
 
     pannerNode.rolloffFactor = 1;
 
-    pannerNode.coneInnerAngle = 360;
-    pannerNode.coneOuterAngle = 360;
+    pannerNode.coneInnerAngle =
+      360;
+
+    pannerNode.coneOuterAngle =
+      360;
+
     pannerNode.coneOuterGain = 0;
 
     gainNode.gain.value = 0;
 
-    pannerNode.connect(gainNode);
+    pannerNode.connect(
+      gainNode
+    );
+
     gainNode.connect(
       audioContext.destination
     );
 
-    // -----------------------------------------
+    // ---------------------------------------
     // AUDIO ELEMENT
-    // -----------------------------------------
+    // ---------------------------------------
 
     const audioElement =
-      document.createElement("audio");
+      document.createElement(
+        "audio"
+      );
 
     audioElement.autoplay = true;
     audioElement.playsInline = true;
 
-    // -----------------------------------------
+    // ---------------------------------------
     // STORE PEER
-    // -----------------------------------------
+    // ---------------------------------------
 
     peersRef.current.set(
       remoteUserId,
@@ -286,9 +471,9 @@ function ProximityVoice({
       }
     );
 
-    // -----------------------------------------
+    // ---------------------------------------
     // REMOTE AUDIO
-    // -----------------------------------------
+    // ---------------------------------------
 
     pc.ontrack = async (event) => {
       console.log(
@@ -297,7 +482,7 @@ function ProximityVoice({
       );
 
       const remoteStream =
-        event.streams[0];
+        event.streams?.[0];
 
       if (!remoteStream) {
         return;
@@ -305,6 +490,20 @@ function ProximityVoice({
 
       audioElement.srcObject =
         remoteStream;
+
+      try {
+        if (
+          audioContext.state ===
+          "suspended"
+        ) {
+          await audioContext.resume();
+        }
+      } catch (error) {
+        console.warn(
+          "AudioContext resume error:",
+          error
+        );
+      }
 
       try {
         await audioElement.play();
@@ -316,6 +515,14 @@ function ProximityVoice({
       }
 
       try {
+        /*
+         * Do NOT connect the audioElement
+         * itself to destination.
+         *
+         * We process the MediaStream
+         * through Web Audio.
+         */
+
         const source =
           audioContext.createMediaStreamSource(
             remoteStream
@@ -334,7 +541,7 @@ function ProximityVoice({
           peer.source = source;
         }
 
-        updateSpatialAudio(
+        applyAudioGain(
           remoteUserId,
           remoteUser
         );
@@ -346,11 +553,13 @@ function ProximityVoice({
       }
     };
 
-    // -----------------------------------------
+    // ---------------------------------------
     // ICE
-    // -----------------------------------------
+    // ---------------------------------------
 
-    pc.onicecandidate = (event) => {
+    pc.onicecandidate = (
+      event
+    ) => {
       if (!event.candidate) {
         return;
       }
@@ -367,32 +576,36 @@ function ProximityVoice({
       );
     };
 
-    // -----------------------------------------
+    // ---------------------------------------
     // CONNECTION STATE
-    // -----------------------------------------
+    // ---------------------------------------
 
-    pc.onconnectionstatechange = () => {
-      console.log(
-        "WebRTC connection:",
-        remoteUserId,
-        pc.connectionState
-      );
-
-      if (
-        pc.connectionState === "failed" ||
-        pc.connectionState === "closed" ||
-        pc.connectionState === "disconnected"
-      ) {
-        closePeer(
+    pc.onconnectionstatechange =
+      () => {
+        console.log(
+          "WebRTC connection:",
           remoteUserId,
-          false
+          pc.connectionState
         );
-      }
-    };
 
-    // -----------------------------------------
+        if (
+          pc.connectionState ===
+            "failed" ||
+          pc.connectionState ===
+            "closed" ||
+          pc.connectionState ===
+            "disconnected"
+        ) {
+          closePeer(
+            remoteUserId,
+            false
+          );
+        }
+      };
+
+    // ---------------------------------------
     // OFFER
-    // -----------------------------------------
+    // ---------------------------------------
 
     if (createOffer) {
       try {
@@ -466,6 +679,7 @@ function ProximityVoice({
 
       setVoiceEnabled(true);
       setMuted(false);
+
       setStatus(
         "Spatial voice enabled"
       );
@@ -490,8 +704,10 @@ function ProximityVoice({
   // -----------------------------------------
 
   const stopVoice = () => {
-    peersRef.current.forEach(
-      (_, remoteUserId) => {
+    Array.from(
+      peersRef.current.keys()
+    ).forEach(
+      (remoteUserId) => {
         closePeer(
           remoteUserId,
           true
@@ -509,8 +725,11 @@ function ProximityVoice({
       localStreamRef.current = null;
     }
 
+    spatialAudioRef.current.clear();
+
     setVoiceEnabled(false);
     setMuted(false);
+
     setStatus(
       "Voice disabled"
     );
@@ -525,110 +744,225 @@ function ProximityVoice({
       return;
     }
 
-    const newMuted = !muted;
+    const newMuted =
+      !muted;
 
     localStreamRef.current
       .getAudioTracks()
       .forEach((track) => {
-        track.enabled = !newMuted;
+        track.enabled =
+          !newMuted;
       });
 
     setMuted(newMuted);
 
     peersRef.current.forEach(
-      (peer) => {
-        if (peer.gainNode) {
-          if (newMuted) {
-            peer.gainNode.gain.value = 0;
-          }
+      (peer, remoteUserId) => {
+        if (!peer.remoteUser) {
+          return;
         }
+
+        applyAudioGain(
+          remoteUserId,
+          peer.remoteUser
+        );
       }
     );
   };
+
+  // -----------------------------------------
+  // SERVER PROXIMITY UPDATE
+  // -----------------------------------------
+
+  useEffect(() => {
+    const handleProximityUpdate =
+      (data) => {
+        /*
+         * Expected server payload:
+         *
+         * {
+         *   userId,
+         *   nearbyUsers: [
+         *     {
+         *       userId,
+         *       distance,
+         *       distanceGain,
+         *       obstacleGain,
+         *       finalGain,
+         *       blocked,
+         *       blockingObstacles
+         *     }
+         *   ]
+         * }
+         *
+         * OR a direct payload containing
+         * remote user information.
+         */
+
+        const updates =
+          Array.isArray(
+            data?.nearbyUsers
+          )
+            ? data.nearbyUsers
+            : data
+              ? [data]
+              : [];
+
+        updates.forEach(
+          (audioData) => {
+            const remoteUserId =
+              audioData?.userId ||
+              audioData?.remoteUserId;
+
+            if (!remoteUserId) {
+              return;
+            }
+
+            spatialAudioRef.current.set(
+              String(remoteUserId),
+              {
+                distance:
+                  audioData.distance,
+
+                distanceGain:
+                  audioData.distanceGain,
+
+                obstacleGain:
+                  audioData.obstacleGain,
+
+                finalGain:
+                  audioData.finalGain,
+
+                blocked:
+                  Boolean(
+                    audioData.blocked
+                  ),
+
+                blockingObstacles:
+                  audioData.blockingObstacles ||
+                  [],
+              }
+            );
+
+            const peer =
+              peersRef.current.get(
+                remoteUserId
+              );
+
+            if (!peer) {
+              return;
+            }
+
+            applyAudioGain(
+              remoteUserId,
+              peer.remoteUser
+            );
+          }
+        );
+      };
+
+    socket.on(
+      "proximity:update",
+      handleProximityUpdate
+    );
+
+    return () => {
+      socket.off(
+        "proximity:update",
+        handleProximityUpdate
+      );
+    };
+  }, [muted]);
 
   // -----------------------------------------
   // RECEIVE OFFER
   // -----------------------------------------
 
   useEffect(() => {
-    const handleOffer = async (data) => {
-      const fromUserId =
-        data.fromUserId;
+    const handleOffer =
+      async (data) => {
+        const fromUserId =
+          data.fromUserId;
 
-      const offer = data.offer;
+        const offer =
+          data.offer;
 
-      console.log(
-        "Received offer:",
-        fromUserId
-      );
-
-      if (!voiceEnabled) {
-        return;
-      }
-
-      const remoteUser =
-        nearbyUsers.find(
-          (user) =>
-            String(user.userId) ===
-            String(fromUserId)
+        console.log(
+          "Received offer:",
+          fromUserId
         );
 
-      if (!remoteUser) {
-        return;
-      }
-
-      try {
-        const pc =
-          await createPeerConnection(
-            fromUserId,
-            remoteUser,
-            false
-          );
-
-        if (!pc) {
+        if (!voiceEnabled) {
           return;
         }
 
-        await pc.setRemoteDescription(
-          new RTCSessionDescription(
-            offer
-          )
-        );
+        const remoteUser =
+          nearbyUsers.find(
+            (user) =>
+              String(
+                user.userId
+              ) ===
+              String(
+                fromUserId
+              )
+          );
 
-        const answer =
-          await pc.createAnswer();
+        if (!remoteUser) {
+          return;
+        }
 
-        await pc.setLocalDescription(
-          answer
-        );
-
-        socket.emit(
-          "webrtc:answer",
-          {
-            targetUserId:
+        try {
+          const pc =
+            await createPeerConnection(
               fromUserId,
+              remoteUser,
+              false
+            );
 
-            answer:
-              pc.localDescription,
+          if (!pc) {
+            return;
           }
-        );
 
-        console.log(
-          "Answer sent:",
-          fromUserId
-        );
-      } catch (error) {
-        console.error(
-          "Offer handling error:",
-          error
-        );
+          await pc.setRemoteDescription(
+            new RTCSessionDescription(
+              offer
+            )
+          );
 
-        closePeer(
-          fromUserId,
-          false
-        );
-      }
-    };
+          const answer =
+            await pc.createAnswer();
+
+          await pc.setLocalDescription(
+            answer
+          );
+
+          socket.emit(
+            "webrtc:answer",
+            {
+              targetUserId:
+                fromUserId,
+
+              answer:
+                pc.localDescription,
+            }
+          );
+
+          console.log(
+            "Answer sent:",
+            fromUserId
+          );
+        } catch (error) {
+          console.error(
+            "Offer handling error:",
+            error
+          );
+
+          closePeer(
+            fromUserId,
+            false
+          );
+        }
+      };
 
     socket.on(
       "webrtc:offer",
@@ -651,44 +985,46 @@ function ProximityVoice({
   // -----------------------------------------
 
   useEffect(() => {
-    const handleAnswer = async (data) => {
-      const fromUserId =
-        data.fromUserId;
+    const handleAnswer =
+      async (data) => {
+        const fromUserId =
+          data.fromUserId;
 
-      const answer = data.answer;
-
-      console.log(
-        "Received answer:",
-        fromUserId
-      );
-
-      const peer =
-        peersRef.current.get(
-          fromUserId
-        );
-
-      if (!peer) {
-        return;
-      }
-
-      try {
-        await peer.pc.setRemoteDescription(
-          new RTCSessionDescription(
-            answer
-          )
-        );
+        const answer =
+          data.answer;
 
         console.log(
-          "Answer accepted:",
+          "Received answer:",
           fromUserId
         );
-      } catch (error) {
-        console.error(
-          "Answer error:",
-          error
-        );
-      }
-    };
+
+        const peer =
+          peersRef.current.get(
+            fromUserId
+          );
+
+        if (!peer) {
+          return;
+        }
+
+        try {
+          await peer.pc.setRemoteDescription(
+            new RTCSessionDescription(
+              answer
+            )
+          );
+
+          console.log(
+            "Answer accepted:",
+            fromUserId
+          );
+        } catch (error) {
+          console.error(
+            "Answer error:",
+            error
+          );
+        }
+      };
 
     socket.on(
       "webrtc:answer",
@@ -708,35 +1044,36 @@ function ProximityVoice({
   // -----------------------------------------
 
   useEffect(() => {
-    const handleIce = async (data) => {
-      const fromUserId =
-        data.fromUserId;
+    const handleIce =
+      async (data) => {
+        const fromUserId =
+          data.fromUserId;
 
-      const candidate =
-        data.candidate;
+        const candidate =
+          data.candidate;
 
-      const peer =
-        peersRef.current.get(
-          fromUserId
-        );
+        const peer =
+          peersRef.current.get(
+            fromUserId
+          );
 
-      if (!peer) {
-        return;
-      }
+        if (!peer) {
+          return;
+        }
 
-      try {
-        await peer.pc.addIceCandidate(
-          new RTCIceCandidate(
-            candidate
-          )
-        );
-      } catch (error) {
-        console.error(
-          "ICE error:",
-          error
-        );
-      }
-    };
+        try {
+          await peer.pc.addIceCandidate(
+            new RTCIceCandidate(
+              candidate
+            )
+          );
+        } catch (error) {
+          console.error(
+            "ICE error:",
+            error
+          );
+        }
+      };
 
     socket.on(
       "webrtc:ice-candidate",
@@ -756,20 +1093,21 @@ function ProximityVoice({
   // -----------------------------------------
 
   useEffect(() => {
-    const handlePeerLeft = (data) => {
-      const remoteUserId =
-        data.userId;
+    const handlePeerLeft =
+      (data) => {
+        const remoteUserId =
+          data.userId;
 
-      console.log(
-        "Peer left:",
-        remoteUserId
-      );
+        console.log(
+          "Peer left:",
+          remoteUserId
+        );
 
-      closePeer(
-        remoteUserId,
-        false
-      );
-    };
+        closePeer(
+          remoteUserId,
+          false
+        );
+      };
 
     socket.on(
       "webrtc:peer-left",
@@ -811,7 +1149,9 @@ function ProximityVoice({
           remoteUser.userId;
 
         if (
-          String(remoteUserId) ===
+          String(
+            remoteUserId
+          ) ===
           String(userId)
         ) {
           return;
@@ -820,7 +1160,10 @@ function ProximityVoice({
         const distance =
           getDistance(remoteUser);
 
-        // Outside 100px
+        // -----------------------------------
+        // OUTSIDE HEARING RANGE
+        // -----------------------------------
+
         if (
           distance >
           HEARING_DISTANCE
@@ -839,7 +1182,10 @@ function ProximityVoice({
           return;
         }
 
-        // Existing peer
+        // -----------------------------------
+        // EXISTING PEER
+        // -----------------------------------
+
         if (
           peersRef.current.has(
             remoteUserId
@@ -853,7 +1199,7 @@ function ProximityVoice({
           peer.remoteUser =
             remoteUser;
 
-          updateSpatialAudio(
+          applyAudioGain(
             remoteUserId,
             remoteUser
           );
@@ -861,10 +1207,9 @@ function ProximityVoice({
           return;
         }
 
-        /*
-         * Only one user creates
-         * the WebRTC offer.
-         */
+        // -----------------------------------
+        // OFFERER SELECTION
+        // -----------------------------------
 
         const createOffer =
           String(userId) <
@@ -897,8 +1242,12 @@ function ProximityVoice({
         const remoteUser =
           nearbyUsers.find(
             (user) =>
-              String(user.userId) ===
-              String(remoteUserId)
+              String(
+                user.userId
+              ) ===
+              String(
+                remoteUserId
+              )
           );
 
         if (!remoteUser) {
@@ -923,7 +1272,7 @@ function ProximityVoice({
           return;
         }
 
-        updateSpatialAudio(
+        applyAudioGain(
           remoteUserId,
           remoteUser
         );
@@ -942,8 +1291,10 @@ function ProximityVoice({
 
   useEffect(() => {
     return () => {
-      peersRef.current.forEach(
-        (_, remoteUserId) => {
+      Array.from(
+        peersRef.current.keys()
+      ).forEach(
+        (remoteUserId) => {
           closePeer(
             remoteUserId,
             false
@@ -960,6 +1311,8 @@ function ProximityVoice({
 
         localStreamRef.current = null;
       }
+
+      spatialAudioRef.current.clear();
     };
   }, []);
 
@@ -975,8 +1328,10 @@ function ProximityVoice({
         right: "20px",
         width: "260px",
         padding: "16px",
-        background: "rgba(15, 23, 42, 0.95)",
-        border: "1px solid rgba(148, 163, 184, 0.25)",
+        background:
+          "rgba(15, 23, 42, 0.95)",
+        border:
+          "1px solid rgba(148, 163, 184, 0.25)",
         borderRadius: "14px",
         color: "white",
         zIndex: 1000,
@@ -988,7 +1343,8 @@ function ProximityVoice({
         style={{
           display: "flex",
           alignItems: "center",
-          justifyContent: "space-between",
+          justifyContent:
+            "space-between",
           marginBottom: "10px",
         }}
       >
@@ -1018,9 +1374,10 @@ function ProximityVoice({
             width: "9px",
             height: "9px",
             borderRadius: "50%",
-            background: voiceEnabled
-              ? "#22c55e"
-              : "#64748b",
+            background:
+              voiceEnabled
+                ? "#22c55e"
+                : "#64748b",
           }}
         />
       </div>
@@ -1085,7 +1442,9 @@ function ProximityVoice({
               fontWeight: "600",
             }}
           >
-            {muted ? "Unmute" : "Mute"}
+            {muted
+              ? "Unmute"
+              : "Mute"}
           </button>
 
           <button
@@ -1117,12 +1476,11 @@ function ProximityVoice({
           color: "#94a3b8",
         }}
       >
-        Voice automatically becomes
-        quieter as users move apart.
+        Distance + walls control
+        voice volume automatically.
       </div>
     </div>
   );
 }
 
 export default ProximityVoice;
-
