@@ -13,6 +13,12 @@ const userSchema = new mongoose.Schema(
       required: true,
       unique: true
     },
+    roomId: {
+  type: mongoose.Schema.Types.ObjectId,
+  ref: "Room",
+  default: null,
+  index: true
+}
 // Add the name field to store the user's name
     name: {
       type: String,

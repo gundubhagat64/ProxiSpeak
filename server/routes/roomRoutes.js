@@ -95,39 +95,10 @@ router.put("/:id", async (req, res) => {
       await Room.findByIdAndUpdate(
         req.params.id,
         {
-          router.put("/:id", async (req, res) => {
-          try {
-         const room =
-          await Room.findById(req.params.id);
-
-         if (!room) {
-         return res.status(404).json({
-          success: false,
-         message: "Room not found"
-         }
-        );
-    }
-
-    Object.assign(room, req.body);
-
-    room.version += 1;
-
-    await room.save();
-
-    res.json({
-      success: true,
-      room
-    });
-  } 
-    catch (error) {
-    console.error("Update room error:", error);
-
-    res.status(400).json({
-      success: false,
-      message: error.message
-          });
-            }
-     });
+          ...req.body,
+          $inc: {
+            version: 1
+          }
         },
         {
           new: true,
@@ -146,16 +117,14 @@ router.put("/:id", async (req, res) => {
       success: true,
       room
     });
-  } 
-  
-    catch (error) {
+  } catch (error) {
     console.error("Update room error:", error);
 
     res.status(400).json({
       success: false,
       message: error.message
     });
-     }
+  }
 });
 
 /**
