@@ -612,6 +612,8 @@ function OfficeCanvas() {
       {/* ================= PROXIMITY VOICE ================= */}
 
       <ProximityVoice
+         userId={userId}
+         localPosition={position}
         nearbyUsers={nearbyUsers}
       />
 

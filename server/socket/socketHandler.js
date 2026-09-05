@@ -6,10 +6,18 @@ const {
 
 const WORLD_WIDTH = 1150;
 const WORLD_HEIGHT = 650;
+const HEARING_DISTANCE = 100;
 
 const setupSocket = (io) => {
   io.on("connection", (socket) => {
     console.log(`Socket connected: ${socket.id}`);
+
+    // Store the logged-in user ID for this socket
+    let connectedUserId = null;
+
+    // ==========================================
+    // USER JOIN
+    // ==========================================
 
     socket.on("user:join", async (data) => {
       try {
@@ -27,6 +35,8 @@ const setupSocket = (io) => {
 
           return;
         }
+
+        connectedUserId = userId;
 
         const user = await User.findOneAndUpdate(
           { userId },
@@ -82,84 +92,312 @@ const setupSocket = (io) => {
       }
     });
 
-   socket.on("avatar:move", async (data) => {
-  try {
-    const { userId, x, y } = data;
+    // ==========================================
+    // AVATAR MOVEMENT
+    // ==========================================
 
-    if (
-      !userId ||
-      typeof x !== "number" ||
-      typeof y !== "number" ||
-      x < 0 ||
-      x > WORLD_WIDTH ||
-      y < 0 ||
-      y > WORLD_HEIGHT
-    ) {
-      return;
-    }
+    socket.on("avatar:move", async (data) => {
+      try {
+        const { userId, x, y } = data;
 
-    // Update user's position in MongoDB
-    const user = await User.findOneAndUpdate(
-      {
-        userId,
-        socketId: socket.id
-      },
-      {
-        position: {
-          x,
-          y
-        },
-
-        location: {
-          type: "Point",
-          coordinates: pixelToGeo(x, y)
+        if (
+          !userId ||
+          typeof x !== "number" ||
+          typeof y !== "number" ||
+          x < 0 ||
+          x > WORLD_WIDTH ||
+          y < 0 ||
+          y > WORLD_HEIGHT
+        ) {
+          return;
         }
-      },
-      {
-        new: true
-      }
-    );
 
-    if (!user) {
-      return;
-    }
+        // Security:
+        // Only allow the user connected to this socket
+        // to update their own position.
+        if (connectedUserId !== userId) {
+          return;
+        }
 
-    // Broadcast movement to other users
-    socket.broadcast.emit("avatar:moved", {
-      userId: user.userId,
+        // Update user's position in MongoDB
+        const user = await User.findOneAndUpdate(
+          {
+            userId,
+            socketId: socket.id
+          },
+          {
+            position: {
+              x,
+              y
+            },
 
-      position: {
-        x: user.position.x,
-        y: user.position.y
+            location: {
+              type: "Point",
+              coordinates: pixelToGeo(x, y)
+            }
+          },
+          {
+            new: true
+          }
+        );
+
+        if (!user) {
+          return;
+        }
+
+        // Broadcast movement to other users
+        socket.broadcast.emit("avatar:moved", {
+          userId: user.userId,
+
+          position: {
+            x: user.position.x,
+            y: user.position.y
+          }
+        });
+
+        // ==========================================
+        // PROXIMITY
+        // ==========================================
+
+        const nearbyUsers = await findNearbyUsers(
+          user.userId,
+          x,
+          y,
+          HEARING_DISTANCE
+        );
+
+        const nearbyUserData = nearbyUsers.map((nearbyUser) => ({
+          userId: nearbyUser.userId,
+          name: nearbyUser.name,
+          position: nearbyUser.position
+        }));
+
+        // Send proximity information to moving user
+        socket.emit("proximity:update", {
+          userId: user.userId,
+          nearbyUsers: nearbyUserData
+        });
+
+        // ==========================================
+        // WEBRTC PROXIMITY SIGNAL
+        // ==========================================
+
+        // Tell nearby users that this user is within
+        // the 100px audio range.
+        for (const nearbyUser of nearbyUsers) {
+          if (!nearbyUser.socketId) {
+            continue;
+          }
+
+          io.to(nearbyUser.socketId).emit("proximity:peer-nearby", {
+            userId: user.userId,
+            name: user.name,
+            position: user.position
+          });
+        }
+
+        console.log(
+          `${user.name} has ${nearbyUsers.length} nearby users`
+        );
+      } catch (error) {
+        console.error(
+          "Movement error:",
+          error.message
+        );
       }
     });
 
-    // Find users within 100 pixels
-    const nearbyUsers = await findNearbyUsers(
-      user.userId,
-      x,
-      y,
-      100
-    );
+    // ==========================================
+    // WEBRTC OFFER
+    // ==========================================
 
-    // Send proximity information to the moving user
-    socket.emit("proximity:update", {
-      userId: user.userId,
+    socket.on("webrtc:offer", async (data) => {
+      try {
+        const {
+          targetUserId,
+          offer
+        } = data || {};
 
-      nearbyUsers: nearbyUsers.map((nearbyUser) => ({
-        userId: nearbyUser.userId,
-        name: nearbyUser.name,
-        position: nearbyUser.position
-      }))
+        if (!targetUserId || !offer) {
+          return;
+        }
+
+        if (!connectedUserId) {
+          return;
+        }
+
+        // Find target user
+        const targetUser = await User.findOne({
+          userId: targetUserId,
+          isOnline: true
+        });
+
+        if (!targetUser || !targetUser.socketId) {
+          return;
+        }
+
+        // Forward offer
+        io.to(targetUser.socketId).emit(
+          "webrtc:offer",
+          {
+            fromUserId: connectedUserId,
+            offer
+          }
+        );
+
+        console.log(
+          `WebRTC offer: ${connectedUserId} -> ${targetUserId}`
+        );
+      } catch (error) {
+        console.error(
+          "WebRTC offer error:",
+          error.message
+        );
+      }
     });
 
-    console.log(
-      `${user.name} has ${nearbyUsers.length} nearby users`
+    // ==========================================
+    // WEBRTC ANSWER
+    // ==========================================
+
+    socket.on("webrtc:answer", async (data) => {
+      try {
+        const {
+          targetUserId,
+          answer
+        } = data || {};
+
+        if (!targetUserId || !answer) {
+          return;
+        }
+
+        if (!connectedUserId) {
+          return;
+        }
+
+        const targetUser = await User.findOne({
+          userId: targetUserId,
+          isOnline: true
+        });
+
+        if (!targetUser || !targetUser.socketId) {
+          return;
+        }
+
+        // Forward answer
+        io.to(targetUser.socketId).emit(
+          "webrtc:answer",
+          {
+            fromUserId: connectedUserId,
+            answer
+          }
+        );
+
+        console.log(
+          `WebRTC answer: ${connectedUserId} -> ${targetUserId}`
+        );
+      } catch (error) {
+        console.error(
+          "WebRTC answer error:",
+          error.message
+        );
+      }
+    });
+
+    // ==========================================
+    // WEBRTC ICE CANDIDATE
+    // ==========================================
+
+    socket.on(
+      "webrtc:ice-candidate",
+      async (data) => {
+        try {
+          const {
+            targetUserId,
+            candidate
+          } = data || {};
+
+          if (!targetUserId || !candidate) {
+            return;
+          }
+
+          if (!connectedUserId) {
+            return;
+          }
+
+          const targetUser = await User.findOne({
+            userId: targetUserId,
+            isOnline: true
+          });
+
+          if (!targetUser || !targetUser.socketId) {
+            return;
+          }
+
+          // Forward ICE candidate
+          io.to(targetUser.socketId).emit(
+            "webrtc:ice-candidate",
+            {
+              fromUserId: connectedUserId,
+              candidate
+            }
+          );
+
+          console.log(
+            `ICE candidate: ${connectedUserId} -> ${targetUserId}`
+          );
+        } catch (error) {
+          console.error(
+            "ICE candidate error:",
+            error.message
+          );
+        }
+      }
     );
-  } catch (error) {
-    console.error("Movement error:", error.message);
-  }
-});
+
+    // ==========================================
+    // WEBRTC PEER LEAVE
+    // ==========================================
+
+    socket.on(
+      "webrtc:peer-left",
+      async (data) => {
+        try {
+          const {
+            targetUserId
+          } = data || {};
+
+          if (!targetUserId || !connectedUserId) {
+            return;
+          }
+
+          const targetUser = await User.findOne({
+            userId: targetUserId,
+            isOnline: true
+          });
+
+          if (!targetUser || !targetUser.socketId) {
+            return;
+          }
+
+          io.to(targetUser.socketId).emit(
+            "webrtc:peer-left",
+            {
+              userId: connectedUserId
+            }
+          );
+        } catch (error) {
+          console.error(
+            "Peer leave error:",
+            error.message
+          );
+        }
+      }
+    );
+
+    // ==========================================
+    // DISCONNECT
+    // ==========================================
 
     socket.on("disconnect", async () => {
       try {
@@ -168,7 +406,8 @@ const setupSocket = (io) => {
             socketId: socket.id
           },
           {
-            isOnline: false
+            isOnline: false,
+            socketId: null
           },
           {
             new: true
@@ -176,16 +415,29 @@ const setupSocket = (io) => {
         );
 
         if (user) {
+          // Tell all clients that this user left
           io.emit("user:left", {
             userId: user.userId
           });
 
-          console.log(`${user.name} disconnected`);
+          // Tell all clients to close WebRTC connection
+          io.emit("webrtc:peer-left", {
+            userId: user.userId
+          });
+
+          console.log(
+            `${user.name} disconnected`
+          );
         }
 
-        console.log(`Socket disconnected: ${socket.id}`);
+        console.log(
+          `Socket disconnected: ${socket.id}`
+        );
       } catch (error) {
-        console.error("Disconnect error:", error.message);
+        console.error(
+          "Disconnect error:",
+          error.message
+        );
       }
     });
   });
