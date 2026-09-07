@@ -2,8 +2,7 @@ require("dotenv").config();
 
 const connectDB = require("./config/db");
 const { findNearbyUsers } = require("./proximity");
-
-// Test function to check the proximity query functionality
+const Room = require("./models/Room");
 
 const test = async () => {
   try {
@@ -11,11 +10,25 @@ const test = async () => {
 
     console.log("=== Proximity Testing Started ===");
 
+    // Find the test room
+    const room = await Room.findOne({
+      name: "Proximity Test Room"
+    });
+
+    if (!room) {
+      throw new Error(
+        "Proximity Test Room not found. Run node seedProximityUsers.js first."
+      );
+    }
+
+    console.log("Test Room:", room._id);
+
     // Test 1: Normal proximity query
     console.log("\nTest 1: Normal query");
 
     const users = await findNearbyUsers(
       "test-user",
+      room._id,
       400,
       300,
       100
@@ -37,6 +50,7 @@ const test = async () => {
 
     const nearbySmallRadius = await findNearbyUsers(
       "test-user",
+      room._id,
       400,
       300,
       30
@@ -52,6 +66,7 @@ const test = async () => {
 
     const nearbyLargeRadius = await findNearbyUsers(
       "test-user",
+      room._id,
       400,
       300,
       200
