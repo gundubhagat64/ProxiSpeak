@@ -1,9 +1,12 @@
 import { useEffect, useState } from "react";
+
 import Avatar from "./Avatar";
 import Furniture from "./Furniture";
 import MiniMap from "./MiniMap";
 import OnlineUsers from "./OnlineUsers";
 import ChatBox from "./ChatBox";
+import ProximityVoice from "./ProximityVoice";
+import VoiceControls from "./VoiceControls";
 import socket from "../socket";
 
 function OfficeCanvas() {
@@ -14,10 +17,43 @@ function OfficeCanvas() {
 
   const [users, setUsers] = useState([]);
 
+  // Users detected by backend proximity query
+  const [nearbyUsers, setNearbyUsers] = useState([]);
+
+  // Office layout loaded from MongoDB
+  const [officeLayout, setOfficeLayout] = useState({
+    width: 1150,
+    height: 650,
+    spawnPoint: {
+      x: 200,
+      y: 150,
+    },
+    furniture: [],
+    obstacles: [],
+  });
+
+  // Chat messages
+  const [messages, setMessages] = useState([]);
+
   const username =
     localStorage.getItem("username") || "Guest";
 
-  // Create unique user ID
+  // ================= USER STATUS =================
+
+  const [userStatus, setUserStatus] = useState("Online");
+  const [currentTime, setCurrentTime] = useState(new Date());
+
+  // Live clock
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCurrentTime(new Date());
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, []);
+
+  // ================= USER ID =================
+
   const [userId] = useState(() => {
     let id = localStorage.getItem("userId");
 
@@ -29,33 +65,25 @@ function OfficeCanvas() {
     return id;
   });
 
-  // Obstacles
-  const obstacles = [
-    {
-      x: 350,
-      y: 180,
-      width: 140,
-      height: 80,
-    },
-    {
-      x: 650,
-      y: 320,
-      width: 140,
-      height: 80,
-    },
-    {
-      x: 100,
-      y: 430,
-      width: 220,
-      height: 140,
-    },
-  ];
+  // Current MongoDB room
+  const roomId = "6a9c6a89f703548eca1e9415";
 
-  // Collision Detection
+  // ================= OFFICE LAYOUT =================
+
+  const obstacles = officeLayout.obstacles || [];
+  const furniture = officeLayout.furniture || [];
+
+  // ================= COLLISION DETECTION =================
+
   const checkCollision = (x, y) => {
     const avatarSize = 40;
 
-    return obstacles.some((obj) => {
+    const collisionObjects = [
+      ...obstacles,
+      ...furniture,
+    ];
+
+    return collisionObjects.some((obj) => {
       return (
         x < obj.x + obj.width &&
         x + avatarSize > obj.x &&
@@ -77,6 +105,7 @@ function OfficeCanvas() {
       socket.emit("user:join", {
         userId,
         name: username,
+        roomId,
         x: position.x,
         y: position.y,
       });
@@ -87,6 +116,15 @@ function OfficeCanvas() {
       );
     };
 
+    const handleConnectError = (error) => {
+      console.error(
+        "❌ Socket connection error:",
+        error.message
+      );
+    };
+
+    // ================= USERS LIST =================
+
     const handleUsersList = (onlineUsers) => {
       console.log(
         "Online users:",
@@ -96,8 +134,13 @@ function OfficeCanvas() {
       setUsers(onlineUsers);
     };
 
+    // ================= USER JOINED =================
+
     const handleUserJoined = (user) => {
-      console.log("User joined:", user);
+      console.log(
+        "User joined:",
+        user
+      );
 
       setUsers((prev) => {
         const exists = prev.some(
@@ -113,6 +156,8 @@ function OfficeCanvas() {
       });
     };
 
+    // ================= AVATAR MOVED =================
+
     const handleAvatarMoved = (data) => {
       setUsers((prev) =>
         prev.map((user) =>
@@ -126,6 +171,84 @@ function OfficeCanvas() {
       );
     };
 
+    // ================= OFFICE LAYOUT =================
+
+    const handleOfficeLayout = (layout) => {
+      console.log(
+        "🏢 Office layout received:",
+        layout
+      );
+
+      if (!layout) {
+        return;
+      }
+
+      setOfficeLayout({
+        width: layout.width || 1150,
+
+        height:
+          layout.height || 650,
+
+        spawnPoint:
+          layout.spawnPoint || {
+            x: 200,
+            y: 150,
+          },
+
+        furniture:
+          Array.isArray(layout.furniture)
+            ? layout.furniture
+            : [],
+
+        obstacles:
+          Array.isArray(layout.obstacles)
+            ? layout.obstacles
+            : [],
+      });
+
+      // Use server-defined spawn point
+      if (layout.spawnPoint) {
+        setPosition({
+          x:
+            layout.spawnPoint.x ??
+            200,
+
+          y:
+            layout.spawnPoint.y ??
+            150,
+        });
+      }
+    };
+
+    // ================= PROXIMITY =================
+
+    const handleProximityUpdate = (data) => {
+      console.log(
+        "📍 Proximity update:",
+        data
+      );
+
+      setNearbyUsers(
+        data.nearbyUsers || []
+      );
+    };
+
+    // ================= CHAT RECEIVE =================
+
+    const handleChatReceive = (message) => {
+      console.log(
+        "💬 Chat message received:",
+        message
+      );
+
+      setMessages((prev) => [
+        ...prev,
+        message,
+      ]);
+    };
+
+    // ================= USER LEFT =================
+
     const handleUserLeft = (data) => {
       console.log(
         "User left:",
@@ -138,7 +261,16 @@ function OfficeCanvas() {
             user.userId !== data.userId
         )
       );
+
+      setNearbyUsers((prev) =>
+        prev.filter(
+          (user) =>
+            user.userId !== data.userId
+        )
+      );
     };
+
+    // ================= SERVER ERROR =================
 
     const handleServerError = (data) => {
       console.error(
@@ -147,9 +279,16 @@ function OfficeCanvas() {
       );
     };
 
+    // ================= REGISTER LISTENERS =================
+
     socket.on(
       "connect",
       handleConnect
+    );
+
+    socket.on(
+      "connect_error",
+      handleConnectError
     );
 
     socket.on(
@@ -168,6 +307,21 @@ function OfficeCanvas() {
     );
 
     socket.on(
+      "office:layout",
+      handleOfficeLayout
+    );
+
+    socket.on(
+      "proximity:update",
+      handleProximityUpdate
+    );
+
+    socket.on(
+      "chat:receive",
+      handleChatReceive
+    );
+
+    socket.on(
       "user:left",
       handleUserLeft
     );
@@ -177,16 +331,25 @@ function OfficeCanvas() {
       handleServerError
     );
 
+    // ================= CONNECT =================
+
     if (!socket.connected) {
       socket.connect();
     } else {
       handleConnect();
     }
 
+    // ================= CLEANUP =================
+
     return () => {
       socket.off(
         "connect",
         handleConnect
+      );
+
+      socket.off(
+        "connect_error",
+        handleConnectError
       );
 
       socket.off(
@@ -205,6 +368,21 @@ function OfficeCanvas() {
       );
 
       socket.off(
+        "office:layout",
+        handleOfficeLayout
+      );
+
+      socket.off(
+        "proximity:update",
+        handleProximityUpdate
+      );
+
+      socket.off(
+        "chat:receive",
+        handleChatReceive
+      );
+
+      socket.off(
         "user:left",
         handleUserLeft
       );
@@ -216,7 +394,11 @@ function OfficeCanvas() {
 
       socket.disconnect();
     };
-  }, [userId, username]);
+  }, [
+    userId,
+    username,
+    roomId,
+  ]);
 
   // ================= MOVEMENT =================
 
@@ -240,6 +422,7 @@ function OfficeCanvas() {
 
         const speed = 10;
 
+        // Movement
         if (e.key === "ArrowUp") {
           y -= speed;
         }
@@ -256,25 +439,46 @@ function OfficeCanvas() {
           x += speed;
         }
 
+        // ================= BOUNDARY =================
+
+        const avatarSize = 40;
+
+        const maxX = Math.max(
+          0,
+          officeLayout.width -
+            avatarSize
+        );
+
+        const maxY = Math.max(
+          0,
+          officeLayout.height -
+            avatarSize
+        );
+
         x = Math.max(
           0,
-          Math.min(x, 1150)
+          Math.min(x, maxX)
         );
 
         y = Math.max(
           0,
-          Math.min(y, 650)
+          Math.min(y, maxY)
         );
+
+        // ================= COLLISION =================
 
         if (checkCollision(x, y)) {
           return prev;
         }
+
+        // ================= SEND MOVEMENT =================
 
         if (socket.connected) {
           socket.emit(
             "avatar:move",
             {
               userId,
+              roomId,
               x,
               y,
             }
@@ -299,7 +503,14 @@ function OfficeCanvas() {
         handleKey
       );
     };
-  }, [userId]);
+  }, [
+    userId,
+    roomId,
+    officeLayout.width,
+    officeLayout.height,
+    obstacles,
+    furniture,
+  ]);
 
   // ================= USERS =================
 
@@ -310,16 +521,45 @@ function OfficeCanvas() {
 
   // ================= CHAT =================
 
-  const handleSendMessage = (message) => {
-    console.log(
-      "Chat message:",
-      message
-    );
+  const handleSendMessage = (
+    message
+  ) => {
+    const text = message.trim();
 
-    // Temporary UI test
-    // Real Socket.io chat will be connected
-    // after confirming friend's backend event.
+    if (!text) {
+      return;
+    }
+
+    const newMessage = {
+      id: crypto.randomUUID(),
+      userId,
+      name: username,
+      text,
+      timestamp:
+        new Date().toISOString(),
+    };
+
+    // Show immediately
+    setMessages((prev) => [
+      ...prev,
+      newMessage,
+    ]);
+
+    // Send backend
+    if (socket.connected) {
+      socket.emit(
+        "chat:send",
+        newMessage
+      );
+    }
+
+    console.log(
+      "💬 Chat message:",
+      newMessage
+    );
   };
+
+  // ================= UI =================
 
   return (
     <div className="flex-1 relative overflow-hidden bg-slate-900 pb-16 lg:pb-0">
@@ -345,14 +585,88 @@ function OfficeCanvas() {
               #23272f
             )
           `,
+
           backgroundSize:
             "80px 80px, 80px 80px, 100% 100%",
         }}
       />
 
-      {/* Floor Lighting */}
+      {/* ================= FLOOR LIGHTING ================= */}
 
       <div className="absolute inset-0 bg-gradient-to-br from-white/5 via-transparent to-black/10 pointer-events-none" />
+
+      {/* ================= STATUS BAR ================= */}
+
+      <div className="absolute top-4 right-4 z-50 flex items-center gap-3">
+
+        {/* Live Clock */}
+
+        <div className="hidden sm:flex items-center gap-2 px-4 py-2 rounded-xl bg-slate-800/90 backdrop-blur-md border border-slate-700 shadow-lg">
+
+          <span className="text-sm">
+            🕐
+          </span>
+
+          <span className="text-white text-sm font-semibold">
+            {currentTime.toLocaleTimeString(
+              [],
+              {
+                hour: "2-digit",
+                minute: "2-digit",
+                second: "2-digit",
+              }
+            )}
+          </span>
+
+        </div>
+
+        {/* User Status */}
+
+        <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-slate-800/90 backdrop-blur-md border border-slate-700 shadow-lg">
+
+          <span
+            className={`w-2.5 h-2.5 rounded-full ${
+              userStatus === "Online"
+                ? "bg-green-400"
+                : userStatus === "Busy"
+                ? "bg-red-400"
+                : "bg-yellow-400"
+            }`}
+          />
+
+          <select
+            value={userStatus}
+            onChange={(e) =>
+              setUserStatus(
+                e.target.value
+              )
+            }
+            className="bg-transparent text-white text-sm font-medium outline-none cursor-pointer"
+          >
+            <option
+              value="Online"
+              className="bg-slate-800"
+            >
+              Online
+            </option>
+
+            <option
+              value="Busy"
+              className="bg-slate-800"
+            >
+              Busy
+            </option>
+
+            <option
+              value="Away"
+              className="bg-slate-800"
+            >
+              Away
+            </option>
+          </select>
+
+        </div>
+      </div>
 
       {/* ================= ONLINE USERS ================= */}
 
@@ -360,9 +674,46 @@ function OfficeCanvas() {
         users={otherUsers}
       />
 
+      {/* ================= SOUND / PHYSICAL OBSTACLES ================= */}
+
+      {obstacles.map(
+        (obstacle) => (
+          <div
+            key={
+              obstacle._id ||
+              `obstacle-${obstacle.x}-${obstacle.y}`
+            }
+            className="absolute pointer-events-none"
+            style={{
+              left: obstacle.x,
+              top: obstacle.y,
+              width: obstacle.width,
+              height: obstacle.height,
+
+              background:
+                obstacle.type === "wall"
+                  ? "rgba(100, 116, 139, 0.95)"
+                  : "rgba(71, 85, 105, 0.75)",
+
+              border:
+                obstacle.blocksSound
+                  ? "2px solid rgba(248, 113, 113, 0.8)"
+                  : "1px solid rgba(148, 163, 184, 0.5)",
+
+              borderRadius:
+                obstacle.type === "wall"
+                  ? 2
+                  : 6,
+            }}
+          />
+        )
+      )}
+
       {/* ================= FURNITURE ================= */}
 
-      <Furniture />
+      <Furniture
+        items={furniture}
+      />
 
       {/* ================= YOUR AVATAR ================= */}
 
@@ -374,27 +725,47 @@ function OfficeCanvas() {
 
       {/* ================= OTHER USERS ================= */}
 
-      {otherUsers.map((user) => (
-        <Avatar
-          key={user.userId}
-          x={
-            user.position?.x ??
-            400
-          }
-          y={
-            user.position?.y ??
-            300
-          }
-          name={user.name}
-        />
-      ))}
+      {otherUsers.map(
+        (user) => (
+          <Avatar
+            key={user.userId}
+            x={
+              user.position?.x ??
+              400
+            }
+            y={
+              user.position?.y ??
+              300
+            }
+            name={user.name}
+            isNearby={nearbyUsers.some(
+              (nearbyUser) =>
+                nearbyUser.userId ===
+                user.userId
+            )}
+          />
+        )
+      )}
 
       {/* ================= CHAT ================= */}
 
       <ChatBox
-        messages={[]}
+        messages={messages}
         onSend={handleSendMessage}
+        username={username}
       />
+
+      {/* ================= PROXIMITY VOICE ================= */}
+
+      <ProximityVoice
+        userId={userId}
+        localPosition={position}
+        nearbyUsers={nearbyUsers}
+      />
+
+      {/* ================= VOICE CONTROLS ================= */}
+
+      <VoiceControls />
 
       {/* ================= MINI MAP ================= */}
 
@@ -404,12 +775,15 @@ function OfficeCanvas() {
           users={otherUsers.map(
             (user) => ({
               id: user.userId,
+
               x:
                 user.position?.x ??
                 400,
+
               y:
                 user.position?.y ??
                 300,
+
               name: user.name,
             })
           )}

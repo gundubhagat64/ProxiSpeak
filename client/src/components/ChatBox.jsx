@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+
 import {
   MessageCircle,
   Send,
@@ -13,8 +14,12 @@ function ChatBox({
 }) {
   const [message, setMessage] = useState("");
   const [open, setOpen] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
 
   const messagesEndRef = useRef(null);
+  const previousMessageCount = useRef(
+    messages.length
+  );
 
   // Auto scroll to latest message
   useEffect(() => {
@@ -22,6 +27,32 @@ function ChatBox({
       behavior: "smooth",
     });
   }, [messages]);
+
+  // Track unread messages
+  useEffect(() => {
+    const previousCount =
+      previousMessageCount.current;
+
+    if (
+      messages.length > previousCount &&
+      !open
+    ) {
+      setUnreadCount(
+        (prev) =>
+          prev +
+          (messages.length - previousCount)
+      );
+    }
+
+    previousMessageCount.current =
+      messages.length;
+  }, [messages, open]);
+
+  // Reset unread count when chat opens
+  const handleOpenChat = () => {
+    setOpen(true);
+    setUnreadCount(0);
+  };
 
   const handleSend = () => {
     const text = message.trim();
@@ -36,7 +67,10 @@ function ChatBox({
   };
 
   const handleKeyDown = (e) => {
-    if (e.key === "Enter" && !e.shiftKey) {
+    if (
+      e.key === "Enter" &&
+      !e.shiftKey
+    ) {
       e.preventDefault();
       handleSend();
     }
@@ -63,7 +97,7 @@ function ChatBox({
 
       {!open && (
         <button
-          onClick={() => setOpen(true)}
+          onClick={handleOpenChat}
           aria-label="Open chat"
           className="
             absolute
@@ -88,21 +122,32 @@ function ChatBox({
         >
           <MessageCircle size={22} />
 
-          {/* Notification dot */}
-          {messages.length > 0 && (
+          {/* Unread count */}
+          {unreadCount > 0 && (
             <span
               className="
                 absolute
-                -top-1
-                -right-1
-                w-3
-                h-3
-                bg-green-400
+                -top-2
+                -right-2
+                min-w-5
+                h-5
+                px-1
+                bg-red-500
                 border-2
                 border-slate-950
                 rounded-full
+                text-white
+                text-[10px]
+                font-bold
+                flex
+                items-center
+                justify-center
               "
-            />
+            >
+              {unreadCount > 99
+                ? "99+"
+                : unreadCount}
+            </span>
           )}
         </button>
       )}
@@ -131,7 +176,6 @@ function ChatBox({
             overflow-hidden
           "
         >
-
           {/* ================= HEADER ================= */}
 
           <div
@@ -147,8 +191,6 @@ function ChatBox({
             "
           >
             <div className="flex items-center gap-3">
-
-              {/* Icon */}
               <div
                 className="
                   w-9
@@ -166,7 +208,6 @@ function ChatBox({
                 />
               </div>
 
-              {/* Title */}
               <div>
                 <h3 className="text-white font-semibold text-sm">
                   Office Chat
@@ -183,7 +224,6 @@ function ChatBox({
             </div>
 
             <div className="flex items-center gap-1">
-
               <button
                 className="
                   p-2
@@ -198,7 +238,9 @@ function ChatBox({
               </button>
 
               <button
-                onClick={() => setOpen(false)}
+                onClick={() =>
+                  setOpen(false)
+                }
                 aria-label="Close chat"
                 className="
                   p-2
@@ -211,7 +253,6 @@ function ChatBox({
               >
                 <X size={18} />
               </button>
-
             </div>
           </div>
 
@@ -266,9 +307,9 @@ function ChatBox({
               </div>
             ) : (
               messages.map((msg, index) => {
-
                 const isOwnMessage =
-                  msg.userId === msg.senderId ||
+                  msg.userId ===
+                    msg.senderId ||
                   msg.name === username;
 
                 return (
@@ -293,20 +334,16 @@ function ChatBox({
                         }
                       `}
                     >
-
-                      {/* Sender */}
                       {!isOwnMessage && (
                         <p className="text-cyan-400 text-[11px] font-semibold mb-1">
                           {msg.name || "User"}
                         </p>
                       )}
 
-                      {/* Message */}
                       <p className="text-sm break-words leading-relaxed">
                         {msg.text}
                       </p>
 
-                      {/* Time */}
                       {msg.timestamp && (
                         <p
                           className={`
@@ -319,10 +356,11 @@ function ChatBox({
                             }
                           `}
                         >
-                          {formatTime(msg.timestamp)}
+                          {formatTime(
+                            msg.timestamp
+                          )}
                         </p>
                       )}
-
                     </div>
                   </div>
                 );
@@ -404,7 +442,6 @@ function ChatBox({
               Press Enter to send
             </p>
           </div>
-
         </div>
       )}
     </>

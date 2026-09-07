@@ -5,6 +5,8 @@ const users = [
   { userId: "far-user", x: 520, y: 300 }
 ];
 
+// Calculate distances from the first user to all other users
+
 const currentUser = users[0];
 
 users.slice(1).forEach((user) => {
