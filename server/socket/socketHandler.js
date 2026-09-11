@@ -1,716 +1,661 @@
 const User = require("../models/User");
-const Room = require("../models/Room");
-
 const {
+  findNearbyUsers,
   pixelToGeo,
-  findNearbyUsers
 } = require("../proximity");
-
-const {
-  calculateSpatialAudio
-} = require("../services/obstacleService");
 
 const WORLD_WIDTH = 1150;
 const WORLD_HEIGHT = 650;
+const HEARING_DISTANCE = 100;
 
-const DEFAULT_PROXIMITY_RADIUS = 100;
+// Track current proximity relationships.
+// userId -> Set of nearby userIds
+const proximityState = new Map();
 
-/**
- * Keep room layouts in memory.
- *
- * MongoDB = persistent storage
- * Memory = fast real-time spatial calculations
- */
-const roomCache = new Map();
-
-/**
- * Load room layout.
- */
-async function getRoomLayout(roomId) {
-  if (!roomId) {
-    return null;
-  }
-
-  if (roomCache.has(roomId)) {
-    return roomCache.get(roomId);
-  }
-
-  try {
-    const room =
-      await Room.findById(roomId).lean();
-
-    if (!room) {
-      return null;
-    }
-
-    roomCache.set(roomId, room);
-
-    return room;
-  } catch (error) {
-    console.error(
-      "Room layout load error:",
-      error.message
-    );
-
-    return null;
-  }
-}
-
-/**
- * Refresh room cache after layout update.
- */
-async function refreshRoomCache(roomId) {
-  if (!roomId) {
-    return null;
-  }
-
-  try {
-    const room =
-      await Room.findById(roomId).lean();
-
-    if (!room) {
-      roomCache.delete(roomId);
-
-      return null;
-    }
-
-    roomCache.set(roomId, room);
-
-    return room;
-  } catch (error) {
-    console.error(
-      "Room cache refresh error:",
-      error.message
-    );
-
-    return null;
-  }
-}
-
-/**
- * Get socket users' room layout.
- */
-async function getAudioLayout(roomId) {
-  const room = await getRoomLayout(
-    roomId
+function isValidPosition(x, y) {
+  return (
+    typeof x === "number" &&
+    typeof y === "number" &&
+    Number.isFinite(x) &&
+    Number.isFinite(y) &&
+    x >= 0 &&
+    x <= WORLD_WIDTH &&
+    y >= 0 &&
+    y <= WORLD_HEIGHT
   );
+}
 
-  if (!room) {
-    return [];
+function getNearbyIds(users) {
+  return new Set(users.map((user) => user.userId));
+}
+
+function setProximity(userId, nearbyIds) {
+  proximityState.set(userId, nearbyIds);
+}
+
+function getPreviousProximity(userId) {
+  return proximityState.get(userId) || new Set();
+}
+
+function deleteProximityUser(userId) {
+  proximityState.delete(userId);
+
+  for (const [otherUserId, nearbyIds] of proximityState.entries()) {
+    nearbyIds.delete(userId);
+    proximityState.set(otherUserId, nearbyIds);
   }
-
-  return room.obstacles || [];
 }
 
-const setupSocket = (io) => {
+async function sendPeerLeft(io, userId, remoteUserId) {
+  try {
+    const remoteUser = await User.findOne({
+      userId: remoteUserId,
+      isOnline: true,
+    }).select("socketId");
+
+    if (!remoteUser?.socketId) return;
+
+    io.to(remoteUser.socketId).emit("webrtc:peer-left", {
+      userId,
+    });
+  } catch (error) {
+    console.error("sendPeerLeft error:", error);
+  }
+}
+
+function setupSocket(io) {
   io.on("connection", (socket) => {
-    console.log(
-      `Socket connected: ${socket.id}`
-    );
+    console.log(`Socket connected: ${socket.id}`);
 
-    /**
-     * USER JOIN
-     */
-    socket.on(
-      "user:join",
-      async (data) => {
-        try {
-          const {
+    // ============================================================
+    // USER JOIN
+    // ============================================================
+
+    socket.on("user:join", async (data, callback) => {
+      try {
+        const { userId, name, x, y } = data || {};
+
+        if (!userId || !name) {
+          socket.emit("server:error", {
+            message: "userId and name are required",
+          });
+
+          return;
+        }
+
+        const positionX =
+          typeof x === "number" ? x : 200;
+
+        const positionY =
+          typeof y === "number" ? y : 150;
+
+        if (!isValidPosition(positionX, positionY)) {
+          socket.emit("server:error", {
+            message: "Invalid starting position",
+          });
+
+          return;
+        }
+
+        const [longitude, latitude] =
+          pixelToGeo(positionX, positionY);
+
+        const user = await User.findOneAndUpdate(
+          { userId },
+          {
             userId,
+            socketId: socket.id,
             name,
-            roomId,
-            x = 200,
-            y = 150
-          } = data;
-
-          if (!userId || !name) {
-            socket.emit(
-              "server:error",
-              {
-                message:
-                  "userId and name are required"
-              }
-            );
-
-            return;
+            position: {
+              x: positionX,
+              y: positionY,
+            },
+            location: {
+              type: "Point",
+              coordinates: [
+                longitude,
+                latitude,
+              ],
+            },
+            isOnline: true,
+          },
+          {
+            new: true,
+            upsert: true,
+            setDefaultsOnInsert: true,
           }
+        );
 
-          /**
-           * If roomId exists,
-           * load room layout.
-           */
-          let room = null;
+        socket.userId = userId;
 
-          if (roomId) {
-            room =
-              await getRoomLayout(
-                roomId
-              );
+        // Start empty proximity state.
+        proximityState.set(userId, new Set());
 
-            if (!room) {
-              socket.emit(
-                "server:error",
-                {
-                  message:
-                    "Room not found"
-                }
-              );
+        console.log(
+          `User joined: ${name} (${userId})`
+        );
 
-              return;
-            }
-
-            /**
-             * Join Socket.IO room.
-             */
-            socket.join(roomId);
+        // Tell everyone else.
+        socket.broadcast.emit(
+          "user:joined",
+          {
+            userId: user.userId,
+            name: user.name,
+            position: user.position,
+            location: user.location,
           }
+        );
 
-          const user =
-            await User.findOneAndUpdate(
-              { userId },
-              {
-                socketId: socket.id,
-                userId,
-                name,
-                roomId,
-
-                position: {
-                  x,
-                  y
-                },
-
-                location: {
-                  type: "Point",
-                  coordinates:
-                    pixelToGeo(x, y)
-                },
-
-                isOnline: true
-              },
-              {
-                new: true,
-                upsert: true,
-                setDefaultsOnInsert: true
-              }
-            );
-
-          if (roomId) {
-  socket.to(roomId).emit("user:joined", {
-    userId: user.userId,
-    name: user.name,
-    position: user.position
-  });
-} else {
-  socket.broadcast.emit("user:joined", {
-    userId: user.userId,
-    name: user.name,
-    position: user.position
-  });
-}
-
-          const onlineUsers =
-            await User.find(
-              {
-                isOnline: true,
-                roomId,
-              },
-              {
-                _id: 0,
-                userId: 1,
-                name: 1,
-                position: 1
-              }
-            );
-
-          socket.emit(
-            "users:list",
-            onlineUsers
+        // Send current online users.
+        const onlineUsers =
+          await User.find({
+            isOnline: true,
+          }).select(
+            "userId name position location socketId"
           );
 
-          /**
-           * Send office layout
-           * to new user.
-           */
-          if (room) {
-            socket.emit(
-              "office:layout",
-              {
-                roomId:
-                  room._id,
+        socket.emit(
+          "users:list",
+          onlineUsers.map((onlineUser) => ({
+            userId: onlineUser.userId,
+            name: onlineUser.name,
+            position: onlineUser.position,
+            location: onlineUser.location,
+          }))
+        );
 
-                name:
-                  room.name,
+        if (typeof callback === "function") {
+          callback({
+            success: true,
+            userId: user.userId,
+          });
+        }
+      } catch (error) {
+        console.error(
+          "user:join error:",
+          error
+        );
 
-                width:
-                  room.width,
+        socket.emit("server:error", {
+          message: "Failed to join office",
+        });
 
-                height:
-                  room.height,
-
-                spawnPoint:
-                  room.spawnPoint,
-
-                furniture:
-                  room.furniture,
-
-                obstacles:
-                  room.obstacles,
-
-                version:
-                  room.version
-              }
-            );
-          }
-
-          console.log(
-            `${name} joined the virtual office`
-          );
-        } catch (error) {
-          console.error(
-            "Join error:",
-            error
-          );
-
-          socket.emit(
-            "server:error",
-            {
-              message:
-                "Unable to join the virtual office"
-            }
-          );
+        if (typeof callback === "function") {
+          callback({
+            success: false,
+            message: "Failed to join office",
+          });
         }
       }
-    );
+    });
 
-    /**
-     * AVATAR MOVEMENT
-     */
-    socket.on(
-      "avatar:move",
-      async (data) => {
-        try {
-          const {
+    // ============================================================
+    // AVATAR MOVE
+    // ============================================================
+
+    socket.on("avatar:move", async (data) => {
+      try {
+        const { userId, x, y } = data || {};
+
+        if (!socket.userId) {
+          socket.emit("server:error", {
+            message: "You must join first",
+          });
+
+          return;
+        }
+
+        if (userId !== socket.userId) {
+          socket.emit("server:error", {
+            message: "Unauthorized movement",
+          });
+
+          return;
+        }
+
+        if (!isValidPosition(x, y)) {
+          socket.emit("server:error", {
+            message: "Invalid position",
+          });
+
+          return;
+        }
+
+        const [longitude, latitude] =
+          pixelToGeo(x, y);
+
+        const updatedUser =
+          await User.findOneAndUpdate(
+            {
+              userId,
+              isOnline: true,
+              socketId: socket.id,
+            },
+            {
+              position: {
+                x,
+                y,
+              },
+              location: {
+                type: "Point",
+                coordinates: [
+                  longitude,
+                  latitude,
+                ],
+              },
+            },
+            {
+              new: true,
+            }
+          );
+
+        if (!updatedUser) {
+          return;
+        }
+
+        // Tell everyone about movement.
+        socket.broadcast.emit(
+          "avatar:moved",
+          {
             userId,
-            roomId,
             x,
-            y
-          } = data;
-
-          if (
-            !userId ||
-            typeof x !== "number" ||
-            typeof y !== "number" ||
-            x < 0 ||
-            x > WORLD_WIDTH ||
-            y < 0 ||
-            y > WORLD_HEIGHT
-          ) {
-            return;
+            y,
           }
+        );
 
-          /**
-           * Update MongoDB position.
-           */
-          const user =
-            await User.findOneAndUpdate(
-              {
-                userId,
-                socketId:
-                  socket.id
-              },
-              {
-                position: {
-                  x,
-                  y
-                },
+        // ========================================================
+        // FIND USERS WITHIN HEARING DISTANCE
+        // ========================================================
 
-                location: {
-                  type: "Point",
-                  coordinates:
-                    pixelToGeo(x, y)
-                }
-              },
-              {
-                new: true
-              }
+        const nearbyUsers =
+          await findNearbyUsers(
+            userId,
+            x,
+            y,
+            HEARING_DISTANCE
+          );
+
+        const currentNearbyIds =
+          getNearbyIds(nearbyUsers);
+
+        const previousNearbyIds =
+          getPreviousProximity(userId);
+
+        // ========================================================
+        // USERS WHO ENTERED HEARING RANGE
+        // ========================================================
+
+        for (const nearbyUser of nearbyUsers) {
+          const entered =
+            !previousNearbyIds.has(
+              nearbyUser.userId
             );
 
-          if (!user) {
-            return;
-          }
+          if (!entered) continue;
 
-          /**
-           * Broadcast movement.
-           *
-           * If roomId exists, only
-           * broadcast inside room.
-           */
-          if (roomId) {
-            socket.to(roomId).emit(
-              "avatar:moved",
-              {
-                userId:
-                  user.userId,
-
-                position: {
-                  x:
-                    user.position.x,
-
-                  y:
-                    user.position.y
-                }
-              }
-            );
-          } else {
-            socket.broadcast.emit(
-              "avatar:moved",
-              {
-                userId:
-                  user.userId,
-
-                position: {
-                  x:
-                    user.position.x,
-
-                  y:
-                    user.position.y
-                }
-              }
-            );
-          }
-
-          /**
-           * MongoDB geospatial query.
-           */
-          const nearbyUsers =
-            await findNearbyUsers(
-              user.userId,
-              roomId,
-              x,
-              y,
-              DEFAULT_PROXIMITY_RADIUS
-            );
-
-          /**
-           * Load cached office obstacles.
-           */
-          const obstacles =
-            await getAudioLayout(
-              roomId
-            );
-
-          /**
-           * Calculate audio state
-           * for every nearby user.
-           */
-          const nearbyAudio =
-            nearbyUsers.map(
-              (nearbyUser) => {
-                const source = {
-                  x,
-                  y
-                };
-
-                const target = {
-                  x:
-                    nearbyUser.position.x,
-
-                  y:
-                    nearbyUser.position.y
-                };
-
-                const spatialAudio =
-                  calculateSpatialAudio(
-                    source,
-                    target,
-                    obstacles,
-                    DEFAULT_PROXIMITY_RADIUS
-                  );
-
-                return {
-                  userId:
-                    nearbyUser.userId,
-
-                  name:
-                    nearbyUser.name,
-
-                  position:
-                    nearbyUser.position,
-
-                  distance:
-                    spatialAudio.distance,
-
-                  distanceGain:
-                    spatialAudio.distanceGain,
-
-                  obstacleGain:
-                    spatialAudio.obstacleGain,
-
-                  finalGain:
-                    spatialAudio.finalGain,
-
-                  blocked:
-                    spatialAudio.blocked,
-
-                  blockingObstacles:
-                    spatialAudio.blockingObstacles
-                };
-              }
-            );
-
-          /**
-           * Send proximity + audio
-           * information to moving user.
-           */
+          // Tell moving user about remote peer.
           socket.emit(
-            "proximity:update",
+            "proximity:peer-nearby",
             {
               userId:
-                user.userId,
+                nearbyUser.userId,
 
-              nearbyUsers:
-                nearbyAudio
+              socketId:
+                nearbyUser.socketId,
+
+              name:
+                nearbyUser.name,
+
+              position:
+                nearbyUser.position,
             }
           );
 
-          /**
-           * Optional:
-           * tell nearby users about
-           * this user's audio state.
-           */
-          for (
-            const nearbyUser
-            of nearbyAudio
-          ) {
-            const targetSocket =
-              io.sockets.sockets;
+          // Tell remote user about moving user.
+          if (nearbyUser.socketId) {
+            io.to(
+              nearbyUser.socketId
+            ).emit(
+              "proximity:peer-nearby",
+              {
+                userId:
+                  updatedUser.userId,
 
-            for (
-              const [
-                socketId,
-                connectedSocket
-              ] of targetSocket
-            ) {
-              if (
-                connectedSocket.id ===
-                socket.id
-              ) {
-                continue;
+                socketId:
+                  socket.id,
+
+                name:
+                  updatedUser.name,
+
+                position:
+                  updatedUser.position,
               }
-
-              connectedSocket.emit(
-                "audio:spatial-update",
-                {
-                  sourceUserId:
-                    user.userId,
-
-                  position:
-                    user.position,
-
-                  distance:
-                    nearbyUser.distance,
-
-                  distanceGain:
-                    nearbyUser.distanceGain,
-
-                  obstacleGain:
-                    nearbyUser.obstacleGain,
-
-                  finalGain:
-                    nearbyUser.finalGain,
-
-                  blocked:
-                    nearbyUser.blocked,
-
-                  blockingObstacles:
-                    nearbyUser.blockingObstacles
-                }
-              );
-            }
+            );
           }
+        }
+
+        // ========================================================
+        // USERS WHO LEFT HEARING RANGE
+        // ========================================================
+
+        for (const previousUserId of previousNearbyIds) {
+          if (
+            currentNearbyIds.has(
+              previousUserId
+            )
+          ) {
+            continue;
+          }
+
+          // Tell local client.
+          socket.emit(
+            "webrtc:peer-left",
+            {
+              userId:
+                previousUserId,
+            }
+          );
+
+          // Tell remote client.
+          await sendPeerLeft(
+            io,
+            userId,
+            previousUserId
+          );
+        }
+
+        // Save new proximity state.
+        setProximity(
+          userId,
+          currentNearbyIds
+        );
+
+        // ========================================================
+        // PROXIMITY UPDATE
+        // ========================================================
+
+        const nearbyPayload =
+          nearbyUsers.map((user) => ({
+            userId:
+              user.userId,
+
+            name:
+              user.name,
+
+            position:
+              user.position,
+
+            location:
+              user.location,
+          }));
+
+        socket.emit(
+          "proximity:update",
+          nearbyPayload
+        );
+      } catch (error) {
+        console.error(
+          "avatar:move error:",
+          error
+        );
+      }
+    });
+
+    // ============================================================
+    // WEBRTC OFFER
+    // ============================================================
+
+    socket.on(
+      "webrtc:offer",
+      ({
+        to,
+        offer,
+      } = {}) => {
+        try {
+          if (!to || !offer) return;
+
+          io.to(to).emit(
+            "webrtc:offer",
+            {
+              from: socket.id,
+              fromUserId:
+                socket.userId,
+              offer,
+            }
+          );
 
           console.log(
-            `${user.name} has ${nearbyAudio.length} nearby users`
+            `WebRTC offer: ${socket.id} -> ${to}`
           );
         } catch (error) {
           console.error(
-            "Movement error:",
-            error.message
+            "webrtc:offer error:",
+            error
           );
         }
       }
     );
 
-    /**
-     * REQUEST OFFICE LAYOUT
-     */
+    // ============================================================
+    // WEBRTC ANSWER
+    // ============================================================
+
     socket.on(
-      "office:get-layout",
-      async (data) => {
+      "webrtc:answer",
+      ({
+        to,
+        answer,
+      } = {}) => {
         try {
-          const {
-            roomId
-          } = data;
+          if (!to || !answer) return;
 
-          const room =
-            await getRoomLayout(
-              roomId
-            );
-
-          if (!room) {
-            socket.emit(
-              "server:error",
-              {
-                message:
-                  "Office layout not found"
-              }
-            );
-
-            return;
-          }
-
-          socket.emit(
-            "office:layout",
+          io.to(to).emit(
+            "webrtc:answer",
             {
-              roomId:
-                room._id,
+              from: socket.id,
+              fromUserId:
+                socket.userId,
+              answer,
+            }
+          );
 
-              name:
-                room.name,
+          console.log(
+            `WebRTC answer: ${socket.id} -> ${to}`
+          );
+        } catch (error) {
+          console.error(
+            "webrtc:answer error:",
+            error
+          );
+        }
+      }
+    );
 
-              width:
-                room.width,
+    // ============================================================
+    // WEBRTC ICE CANDIDATE
+    // ============================================================
 
-              height:
-                room.height,
+    socket.on(
+      "webrtc:ice-candidate",
+      ({
+        to,
+        candidate,
+      } = {}) => {
+        try {
+          if (!to || !candidate) return;
 
-              spawnPoint:
-                room.spawnPoint,
-
-              furniture:
-                room.furniture,
-
-              obstacles:
-                room.obstacles,
-
-              version:
-                room.version
+          io.to(to).emit(
+            "webrtc:ice-candidate",
+            {
+              from: socket.id,
+              fromUserId:
+                socket.userId,
+              candidate,
             }
           );
         } catch (error) {
           console.error(
-            "Layout error:",
-            error.message
+            "webrtc:ice-candidate error:",
+            error
           );
         }
       }
     );
 
-    /**
-     * Refresh layout manually.
-     *
-     * Useful after admin/editor
-     * changes office furniture.
-     */
-    socket.on(
-      "office:refresh",
-      async (data) => {
-        try {
-          const {
-            roomId
-          } = data;
+    // ============================================================
+    // MANUAL WEBRTC PEER LEFT
+    // ============================================================
 
-          const room =
-            await refreshRoomCache(
-              roomId
+    socket.on(
+      "webrtc:peer-left",
+      ({
+        to,
+      } = {}) => {
+        if (!to) return;
+
+        io.to(to).emit(
+          "webrtc:peer-left",
+          {
+            userId:
+              socket.userId,
+          }
+        );
+      }
+    );
+
+    // ============================================================
+    // CHAT
+    // ============================================================
+
+    socket.on(
+      "chat:send",
+      async (messageData = {}) => {
+        try {
+          if (!socket.userId) return;
+
+          const {
+            message,
+            text,
+          } = messageData;
+
+          const content =
+            typeof message === "string"
+              ? message
+              : typeof text === "string"
+              ? text
+              : "";
+
+          const cleanMessage =
+            content.trim();
+
+          if (!cleanMessage) return;
+
+          const user =
+            await User.findOne({
+              userId:
+                socket.userId,
+            }).select(
+              "userId name"
             );
 
-          if (!room) {
-            return;
-          }
-
-          io.to(roomId).emit(
-            "office:layout",
+          io.emit(
+            "chat:receive",
             {
-              roomId:
-                room._id,
+              userId:
+                socket.userId,
 
               name:
-                room.name,
+                user?.name || "User",
 
-              width:
-                room.width,
+              message:
+                cleanMessage,
 
-              height:
-                room.height,
-
-              spawnPoint:
-                room.spawnPoint,
-
-              furniture:
-                room.furniture,
-
-              obstacles:
-                room.obstacles,
-
-              version:
-                room.version
+              timestamp:
+                new Date().toISOString(),
             }
           );
         } catch (error) {
           console.error(
-            "Office refresh error:",
-            error.message
+            "chat:send error:",
+            error
           );
         }
       }
     );
 
-    /**
-     * DISCONNECT
-     */
+    // ============================================================
+    // DISCONNECT
+    // ============================================================
+
     socket.on(
       "disconnect",
       async () => {
         try {
+          console.log(
+            `Socket disconnected: ${socket.id}`
+          );
+
+          if (!socket.userId) {
+            return;
+          }
+
           const user =
             await User.findOneAndUpdate(
               {
+                userId:
+                  socket.userId,
+
                 socketId:
-                  socket.id
+                  socket.id,
               },
               {
-                isOnline:
-                  false
+                isOnline: false,
+
+                // IMPORTANT:
+                // Keep this as null only if your
+                // User schema allows null.
+                socketId: null,
               },
               {
-                new: true
+                new: true,
               }
             );
 
           if (user) {
-            if (user.roomId) {
-  io.to(user.roomId).emit("user:left", {
-    userId: user.userId
-  });
-}
+            // Notify everyone.
+            io.emit(
+              "user:left",
+              {
+                userId:
+                  socket.userId,
+              }
+            );
+
+            io.emit(
+              "webrtc:peer-left",
+              {
+                userId:
+                  socket.userId,
+              }
+            );
+
             console.log(
-              `${user.name} disconnected`
+              `User offline: ${socket.userId}`
             );
           }
 
-          console.log(
-            `Socket disconnected: ${socket.id}`
+          deleteProximityUser(
+            socket.userId
           );
         } catch (error) {
           console.error(
-            "Disconnect error:",
-            error.message
+            "disconnect error:",
+            error
           );
         }
       }
     );
   });
-};
+}
 
 module.exports = setupSocket;

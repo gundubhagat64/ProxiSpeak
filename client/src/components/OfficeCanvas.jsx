@@ -1,285 +1,783 @@
-import { useEffect, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 
-import Avatar from "./Avatar";
-import Furniture from "./Furniture";
-import MiniMap from "./MiniMap";
+import socket from "../socket";
+import WebRTCManager from "../services/WebRTCManager";
+import SpatialAudio from "../services/SpatialAudio";
+
+import Navbar from "./Navbar";
+import Sidebar from "./Sidebar";
 import OnlineUsers from "./OnlineUsers";
+import Furniture from "./Furniture";
+import Avatar from "./Avatar";
 import ChatBox from "./ChatBox";
 import ProximityVoice from "./ProximityVoice";
 import VoiceControls from "./VoiceControls";
-import socket from "../socket";
+import MiniMap from "./MiniMap";
+
+const WORLD_WIDTH = 1150;
+const WORLD_HEIGHT = 650;
+
+const MOVE_SPEED = 5;
+const HEARING_DISTANCE = 100;
+
+const INITIAL_POSITION = {
+  x: 200,
+  y: 150,
+};
+
+// ------------------------------------------------------------
+// OfficeCanvas
+// ------------------------------------------------------------
 
 function OfficeCanvas() {
-  const [position, setPosition] = useState({
-    x: 200,
-    y: 150,
-  });
+  // ==========================================================
+  // STATE
+  // ==========================================================
 
-  const [users, setUsers] = useState([]);
+  const [position, setPosition] =
+    useState(INITIAL_POSITION);
 
-  // Users detected by backend proximity query
-  const [nearbyUsers, setNearbyUsers] = useState([]);
+  const [users, setUsers] =
+    useState([]);
 
-  // Office layout loaded from MongoDB
-  const [officeLayout, setOfficeLayout] = useState({
-    width: 1150,
-    height: 650,
-    spawnPoint: {
-      x: 200,
-      y: 150,
-    },
-    furniture: [],
-    obstacles: [],
-  });
+  const [nearbyUsers, setNearbyUsers] =
+    useState([]);
 
-  // Chat messages
-  const [messages, setMessages] = useState([]);
+  const [messages, setMessages] =
+    useState([]);
 
-  const username =
-    localStorage.getItem("username") || "Guest";
+  const [remoteStreams, setRemoteStreams] =
+    useState({});
 
-  // ================= USER STATUS =================
+  const [isMuted, setIsMuted] =
+    useState(false);
 
-  const [userStatus, setUserStatus] = useState("Online");
-  const [currentTime, setCurrentTime] = useState(new Date());
+  const [isConnected, setIsConnected] =
+    useState(false);
 
-  // Live clock
+  const [micEnabled, setMicEnabled] =
+    useState(false);
+
+  // ==========================================================
+  // REFS
+  // ==========================================================
+
+  const userIdRef =
+    useRef(null);
+
+  const usernameRef =
+    useRef(null);
+
+  const positionRef =
+    useRef(INITIAL_POSITION);
+
+  const usersRef =
+    useRef([]);
+
+  const nearbyUsersRef =
+    useRef([]);
+
+  const webRTCRef =
+    useRef(null);
+
+  const spatialAudioRef =
+    useRef(null);
+
+  const localStreamRef =
+    useRef(null);
+
+  const animationFrameRef =
+    useRef(null);
+
+  const keysRef =
+    useRef({});
+
+  const mountedRef =
+    useRef(false);
+
+  // ==========================================================
+  // USER ID
+  // ==========================================================
+
   useEffect(() => {
-    const timer = setInterval(() => {
-      setCurrentTime(new Date());
-    }, 1000);
+    let savedUserId =
+      localStorage.getItem(
+        "proxispeak_user_id"
+      );
 
-    return () => clearInterval(timer);
-  }, []);
+    if (!savedUserId) {
+      savedUserId =
+        crypto.randomUUID();
 
-  // ================= USER ID =================
-
-  const [userId] = useState(() => {
-    let id = localStorage.getItem("userId");
-
-    if (!id) {
-      id = crypto.randomUUID();
-      localStorage.setItem("userId", id);
+      localStorage.setItem(
+        "proxispeak_user_id",
+        savedUserId
+      );
     }
 
-    return id;
-  });
+    userIdRef.current =
+      savedUserId;
 
-  // Current MongoDB room
-  const roomId = "6a9c6a89f703548eca1e9415";
-
-  // ================= OFFICE LAYOUT =================
-
-  const obstacles = officeLayout.obstacles || [];
-  const furniture = officeLayout.furniture || [];
-
-  // ================= COLLISION DETECTION =================
-
-  const checkCollision = (x, y) => {
-    const avatarSize = 40;
-
-    const collisionObjects = [
-      ...obstacles,
-      ...furniture,
-    ];
-
-    return collisionObjects.some((obj) => {
-      return (
-        x < obj.x + obj.width &&
-        x + avatarSize > obj.x &&
-        y < obj.y + obj.height &&
-        y + avatarSize > obj.y
+    const savedName =
+      localStorage.getItem(
+        "proxispeak_username"
       );
-    });
-  };
 
-  // ================= SOCKET.IO =================
+    usernameRef.current =
+      savedName ||
+      `User-${savedUserId.slice(
+        0,
+        5
+      )}`;
+  }, []);
+
+  // ==========================================================
+  // KEEP REFS IN SYNC
+  // ==========================================================
 
   useEffect(() => {
-    const handleConnect = () => {
-      console.log(
-        "Socket connected:",
-        socket.id
-      );
+    positionRef.current =
+      position;
+  }, [position]);
 
-      socket.emit("user:join", {
-        userId,
-        name: username,
-        roomId,
-        x: position.x,
-        y: position.y,
-      });
+  useEffect(() => {
+    usersRef.current =
+      users;
+  }, [users]);
 
-      console.log(
-        "Join request sent:",
-        username
-      );
+  useEffect(() => {
+    nearbyUsersRef.current =
+      nearbyUsers;
+  }, [nearbyUsers]);
+
+  // ==========================================================
+  // INITIALIZE SPATIAL AUDIO
+  // ==========================================================
+
+  useEffect(() => {
+    spatialAudioRef.current =
+      new SpatialAudio();
+
+    spatialAudioRef.current.initialize();
+
+    return () => {
+      spatialAudioRef.current?.destroy();
+      spatialAudioRef.current =
+        null;
     };
+  }, []);
 
-    const handleConnectError = (error) => {
-      console.error(
-        "❌ Socket connection error:",
-        error.message
-      );
-    };
+  // ==========================================================
+  // REMOTE AUDIO CALLBACK
+  // ==========================================================
 
-    // ================= USERS LIST =================
-
-    const handleUsersList = (onlineUsers) => {
-      console.log(
-        "Online users:",
-        onlineUsers
-      );
-
-      setUsers(onlineUsers);
-    };
-
-    // ================= USER JOINED =================
-
-    const handleUserJoined = (user) => {
-      console.log(
-        "User joined:",
-        user
-      );
-
-      setUsers((prev) => {
-        const exists = prev.some(
-          (item) =>
-            item.userId === user.userId
-        );
-
-        if (exists) {
-          return prev;
+  const handleRemoteStream =
+    useCallback(
+      (remoteUserId, stream) => {
+        if (!remoteUserId || !stream) {
+          return;
         }
 
-        return [...prev, user];
-      });
-    };
+        console.log(
+          "Remote stream:",
+          remoteUserId
+        );
 
-    // ================= AVATAR MOVED =================
+        setRemoteStreams(
+          (previous) => ({
+            ...previous,
+            [remoteUserId]: stream,
+          })
+        );
 
-    const handleAvatarMoved = (data) => {
-      setUsers((prev) =>
-        prev.map((user) =>
-          user.userId === data.userId
-            ? {
-                ...user,
-                position: data.position,
-              }
-            : user
-        )
+        // Create Web Audio pipeline.
+        if (spatialAudioRef.current) {
+          spatialAudioRef.current.createRemoteAudio(
+            remoteUserId,
+            stream
+          );
+
+          const remoteUser =
+            nearbyUsersRef.current.find(
+              (user) =>
+                user.userId ===
+                remoteUserId
+            );
+
+          if (remoteUser) {
+            spatialAudioRef.current.updateRemoteAudio(
+              remoteUserId,
+              positionRef.current,
+              remoteUser.position
+            );
+          }
+        }
+      },
+      []
+    );
+
+  // ==========================================================
+  // PEER LEFT CALLBACK
+  // ==========================================================
+
+  const handlePeerLeft =
+    useCallback(
+      (remoteUserId) => {
+        if (!remoteUserId) {
+          return;
+        }
+
+        console.log(
+          "Peer left:",
+          remoteUserId
+        );
+
+        spatialAudioRef.current?.removeRemoteAudio(
+          remoteUserId
+        );
+
+        setRemoteStreams(
+          (previous) => {
+            const updated = {
+              ...previous,
+            };
+
+            delete updated[
+              remoteUserId
+            ];
+
+            return updated;
+          }
+        );
+      },
+      []
+    );
+
+  // ==========================================================
+  // GET MICROPHONE
+  // ==========================================================
+
+  const startMicrophone =
+    useCallback(async () => {
+      try {
+        if (
+          localStreamRef.current
+        ) {
+          return localStreamRef.current;
+        }
+
+        if (
+          !navigator.mediaDevices ||
+          !navigator.mediaDevices
+            .getUserMedia
+        ) {
+          console.error(
+            "getUserMedia is not supported."
+          );
+
+          return null;
+        }
+
+        const stream =
+          await navigator.mediaDevices.getUserMedia(
+            {
+              audio: {
+                echoCancellation: true,
+                noiseSuppression: true,
+                autoGainControl: true,
+              },
+              video: false,
+            }
+          );
+
+        localStreamRef.current =
+          stream;
+
+        setMicEnabled(true);
+
+        if (webRTCRef.current) {
+          webRTCRef.current.setLocalStream(
+            stream
+          );
+        }
+
+        return stream;
+      } catch (error) {
+        console.error(
+          "Microphone permission error:",
+          error
+        );
+
+        setMicEnabled(false);
+
+        return null;
+      }
+    }, []);
+
+  // ==========================================================
+  // INITIALIZE WEBRTC
+  // ==========================================================
+
+  useEffect(() => {
+    if (!userIdRef.current) {
+      return;
+    }
+
+    const manager =
+      new WebRTCManager(
+        socket,
+        userIdRef.current,
+        handleRemoteStream,
+        handlePeerLeft
       );
-    };
 
-    // ================= OFFICE LAYOUT =================
+    webRTCRef.current =
+      manager;
 
-    const handleOfficeLayout = (layout) => {
-      console.log(
-        "🏢 Office layout received:",
-        layout
+    if (localStreamRef.current) {
+      manager.setLocalStream(
+        localStreamRef.current
       );
+    }
 
-      if (!layout) {
+    return () => {
+      manager.close();
+
+      webRTCRef.current =
+        null;
+    };
+  }, [
+    handleRemoteStream,
+    handlePeerLeft,
+  ]);
+
+  // ==========================================================
+  // START MICROPHONE AFTER USER INTERACTION
+  // ==========================================================
+
+  const enableVoice =
+    useCallback(async () => {
+      const stream =
+        await startMicrophone();
+
+      if (!stream) {
         return;
       }
 
-      setOfficeLayout({
-        width: layout.width || 1150,
+      await spatialAudioRef.current?.resume();
 
-        height:
-          layout.height || 650,
+      setMicEnabled(true);
+    }, [
+      startMicrophone,
+    ]);
 
-        spawnPoint:
-          layout.spawnPoint || {
-            x: 200,
-            y: 150,
+  // ==========================================================
+  // SOCKET CONNECTION
+  // ==========================================================
+
+  useEffect(() => {
+    mountedRef.current =
+      true;
+
+    if (!userIdRef.current) {
+      return;
+    }
+
+    const handleConnect =
+      async () => {
+        if (!mountedRef.current) {
+          return;
+        }
+
+        console.log(
+          "Socket connected:",
+          socket.id
+        );
+
+        setIsConnected(true);
+
+        const userId =
+          userIdRef.current;
+
+        const name =
+          usernameRef.current;
+
+        socket.emit(
+          "user:join",
+          {
+            userId,
+            name,
+            x: positionRef.current.x,
+            y: positionRef.current.y,
           },
+          (response) => {
+            console.log(
+              "Join response:",
+              response
+            );
+          }
+        );
 
-        furniture:
-          Array.isArray(layout.furniture)
-            ? layout.furniture
-            : [],
+        // Ask for microphone.
+        // Browser will show permission popup.
+        await startMicrophone();
+      };
 
-        obstacles:
-          Array.isArray(layout.obstacles)
-            ? layout.obstacles
-            : [],
-      });
+    const handleDisconnect =
+      () => {
+        console.log(
+          "Socket disconnected"
+        );
 
-      // Use server-defined spawn point
-      if (layout.spawnPoint) {
-        setPosition({
-          x:
-            layout.spawnPoint.x ??
-            200,
+        setIsConnected(false);
+      };
 
-          y:
-            layout.spawnPoint.y ??
-            150,
-        });
-      }
-    };
+    // --------------------------------------------------------
+    // USERS LIST
+    // --------------------------------------------------------
 
-    // ================= PROXIMITY =================
+    const handleUsersList =
+      (onlineUsers) => {
+        if (!Array.isArray(onlineUsers)) {
+          return;
+        }
 
-    const handleProximityUpdate = (data) => {
-      console.log(
-        "📍 Proximity update:",
-        data
-      );
+        const filtered =
+          onlineUsers.filter(
+            (user) =>
+              user.userId !==
+              userIdRef.current
+          );
 
-      setNearbyUsers(
-        data.nearbyUsers || []
-      );
-    };
+        setUsers(filtered);
+      };
 
-    // ================= CHAT RECEIVE =================
+    // --------------------------------------------------------
+    // USER JOINED
+    // --------------------------------------------------------
 
-    const handleChatReceive = (message) => {
-      console.log(
-        "💬 Chat message received:",
-        message
-      );
+    const handleUserJoined =
+      (user) => {
+        if (
+          !user ||
+          user.userId ===
+            userIdRef.current
+        ) {
+          return;
+        }
 
-      setMessages((prev) => [
-        ...prev,
+        setUsers(
+          (previous) => {
+            const exists =
+              previous.some(
+                (item) =>
+                  item.userId ===
+                  user.userId
+              );
+
+            if (exists) {
+              return previous.map(
+                (item) =>
+                  item.userId ===
+                  user.userId
+                    ? {
+                        ...item,
+                        ...user,
+                      }
+                    : item
+              );
+            }
+
+            return [
+              ...previous,
+              user,
+            ];
+          }
+        );
+      };
+
+    // --------------------------------------------------------
+    // AVATAR MOVED
+    // --------------------------------------------------------
+
+    const handleAvatarMoved =
+      ({
+        userId,
+        x,
+        y,
+      }) => {
+        if (
+          !userId ||
+          userId ===
+            userIdRef.current
+        ) {
+          return;
+        }
+
+        setUsers(
+          (previous) =>
+            previous.map(
+              (user) =>
+                user.userId ===
+                userId
+                  ? {
+                      ...user,
+                      position: {
+                        x,
+                        y,
+                      },
+                    }
+                  : user
+            )
+        );
+
+        setNearbyUsers(
+          (previous) =>
+            previous.map(
+              (user) =>
+                user.userId ===
+                userId
+                  ? {
+                      ...user,
+                      position: {
+                        x,
+                        y,
+                      },
+                    }
+                  : user
+            )
+        );
+      };
+
+    // --------------------------------------------------------
+    // PROXIMITY UPDATE
+    // --------------------------------------------------------
+
+    const handleProximityUpdate =
+      (nearby) => {
+        if (!Array.isArray(nearby)) {
+          return;
+        }
+
+        const filtered =
+          nearby.filter(
+            (user) =>
+              user.userId !==
+              userIdRef.current
+          );
+
+        setNearbyUsers(
+          filtered
+        );
+
+        // Start WebRTC for deterministic initiator.
+        for (const peer of filtered) {
+          if (
+            !peer?.userId ||
+            !peer?.socketId
+          ) {
+            continue;
+          }
+
+          if (
+            userIdRef.current <
+            peer.userId
+          ) {
+            webRTCRef.current?.createOffer(
+              peer.userId,
+              peer.socketId
+            );
+          }
+        }
+      };
+
+    // --------------------------------------------------------
+    // PEER NEARBY
+    // --------------------------------------------------------
+
+    const handlePeerNearby =
+      (peer) => {
+        if (
+          !peer?.userId ||
+          peer.userId ===
+            userIdRef.current
+        ) {
+          return;
+        }
+
+        console.log(
+          "Peer nearby:",
+          peer
+        );
+
+        // Update user position.
+        setUsers(
+          (previous) =>
+            previous.map(
+              (user) =>
+                user.userId ===
+                peer.userId
+                  ? {
+                      ...user,
+                      name:
+                        peer.name ||
+                        user.name,
+                      position:
+                        peer.position ||
+                        user.position,
+                      socketId:
+                        peer.socketId,
+                    }
+                  : user
+            )
+        );
+
+        // Deterministic initiator.
+        if (
+          peer.socketId &&
+          userIdRef.current <
+            peer.userId
+        ) {
+          webRTCRef.current?.createOffer(
+            peer.userId,
+            peer.socketId
+          );
+        }
+      };
+
+    // --------------------------------------------------------
+    // PEER LEFT
+    // --------------------------------------------------------
+
+    const handlePeerLeft =
+      ({
+        userId,
+      }) => {
+        if (!userId) {
+          return;
+        }
+
+        webRTCRef.current?.removePeer(
+          userId
+        );
+
+        spatialAudioRef.current?.removeRemoteAudio(
+          userId
+        );
+
+        setRemoteStreams(
+          (previous) => {
+            const updated = {
+              ...previous,
+            };
+
+            delete updated[userId];
+
+            return updated;
+          }
+        );
+
+        setNearbyUsers(
+          (previous) =>
+            previous.filter(
+              (user) =>
+                user.userId !==
+                userId
+            )
+        );
+      };
+
+    // --------------------------------------------------------
+    // USER LEFT
+    // --------------------------------------------------------
+
+    const handleUserLeft =
+      ({
+        userId,
+      }) => {
+        if (!userId) {
+          return;
+        }
+
+        setUsers(
+          (previous) =>
+            previous.filter(
+              (user) =>
+                user.userId !==
+                userId
+            )
+        );
+
+        setNearbyUsers(
+          (previous) =>
+            previous.filter(
+              (user) =>
+                user.userId !==
+                userId
+            )
+        );
+
+        webRTCRef.current?.removePeer(
+          userId
+        );
+
+        spatialAudioRef.current?.removeRemoteAudio(
+          userId
+        );
+
+        setRemoteStreams(
+          (previous) => {
+            const updated = {
+              ...previous,
+            };
+
+            delete updated[userId];
+
+            return updated;
+          }
+        );
+      };
+
+    // --------------------------------------------------------
+    // CHAT
+    // --------------------------------------------------------
+
+    const handleChatReceive =
+      (message) => {
+        if (!message) {
+          return;
+        }
+
+        setMessages(
+          (previous) => [
+            ...previous,
+            message,
+          ]
+        );
+      };
+
+    // --------------------------------------------------------
+    // SERVER ERROR
+    // --------------------------------------------------------
+
+    const handleServerError =
+      ({
         message,
-      ]);
-    };
+      }) => {
+        console.error(
+          "Server error:",
+          message
+        );
+      };
 
-    // ================= USER LEFT =================
-
-    const handleUserLeft = (data) => {
-      console.log(
-        "User left:",
-        data.userId
-      );
-
-      setUsers((prev) =>
-        prev.filter(
-          (user) =>
-            user.userId !== data.userId
-        )
-      );
-
-      setNearbyUsers((prev) =>
-        prev.filter(
-          (user) =>
-            user.userId !== data.userId
-        )
-      );
-    };
-
-    // ================= SERVER ERROR =================
-
-    const handleServerError = (data) => {
-      console.error(
-        "Server error:",
-        data.message
-      );
-    };
-
-    // ================= REGISTER LISTENERS =================
+    // --------------------------------------------------------
+    // REGISTER
+    // --------------------------------------------------------
 
     socket.on(
       "connect",
@@ -287,8 +785,8 @@ function OfficeCanvas() {
     );
 
     socket.on(
-      "connect_error",
-      handleConnectError
+      "disconnect",
+      handleDisconnect
     );
 
     socket.on(
@@ -307,18 +805,18 @@ function OfficeCanvas() {
     );
 
     socket.on(
-      "office:layout",
-      handleOfficeLayout
-    );
-
-    socket.on(
       "proximity:update",
       handleProximityUpdate
     );
 
     socket.on(
-      "chat:receive",
-      handleChatReceive
+      "proximity:peer-nearby",
+      handlePeerNearby
+    );
+
+    socket.on(
+      "webrtc:peer-left",
+      handlePeerLeft
     );
 
     socket.on(
@@ -327,11 +825,14 @@ function OfficeCanvas() {
     );
 
     socket.on(
+      "chat:receive",
+      handleChatReceive
+    );
+
+    socket.on(
       "server:error",
       handleServerError
     );
-
-    // ================= CONNECT =================
 
     if (!socket.connected) {
       socket.connect();
@@ -339,17 +840,22 @@ function OfficeCanvas() {
       handleConnect();
     }
 
-    // ================= CLEANUP =================
+    // --------------------------------------------------------
+    // CLEANUP
+    // --------------------------------------------------------
 
     return () => {
+      mountedRef.current =
+        false;
+
       socket.off(
         "connect",
         handleConnect
       );
 
       socket.off(
-        "connect_error",
-        handleConnectError
+        "disconnect",
+        handleDisconnect
       );
 
       socket.off(
@@ -368,18 +874,18 @@ function OfficeCanvas() {
       );
 
       socket.off(
-        "office:layout",
-        handleOfficeLayout
-      );
-
-      socket.off(
         "proximity:update",
         handleProximityUpdate
       );
 
       socket.off(
-        "chat:receive",
-        handleChatReceive
+        "proximity:peer-nearby",
+        handlePeerNearby
+      );
+
+      socket.off(
+        "webrtc:peer-left",
+        handlePeerLeft
       );
 
       socket.off(
@@ -388,408 +894,1017 @@ function OfficeCanvas() {
       );
 
       socket.off(
+        "chat:receive",
+        handleChatReceive
+      );
+
+      socket.off(
         "server:error",
         handleServerError
       );
 
-      socket.disconnect();
+      if (socket.connected) {
+        socket.disconnect();
+      }
     };
   }, [
-    userId,
-    username,
-    roomId,
+    startMicrophone,
   ]);
 
-  // ================= MOVEMENT =================
+  // ==========================================================
+  // UPDATE SPATIAL AUDIO
+  // ==========================================================
 
   useEffect(() => {
-    const handleKey = (e) => {
-      const allowedKeys = [
-        "ArrowUp",
-        "ArrowDown",
-        "ArrowLeft",
-        "ArrowRight",
-      ];
+    const audio =
+      spatialAudioRef.current;
 
-      if (!allowedKeys.includes(e.key)) {
-        return;
+    if (!audio) {
+      return;
+    }
+
+    for (const peer of nearbyUsers) {
+      if (!peer?.userId) {
+        continue;
       }
 
-      e.preventDefault();
+      if (!peer?.position) {
+        continue;
+      }
 
-      setPosition((prev) => {
-        let { x, y } = prev;
+      audio.updateRemoteAudio(
+        peer.userId,
+        position,
+        peer.position
+      );
+    }
 
-        const speed = 10;
+    // Remove audio for peers no longer nearby.
+    const nearbyIds =
+      new Set(
+        nearbyUsers.map(
+          (user) =>
+            user.userId
+        )
+      );
 
-        // Movement
-        if (e.key === "ArrowUp") {
-          y -= speed;
-        }
+    for (const userId of Object.keys(
+      remoteStreams
+    )) {
+      if (!nearbyIds.has(userId)) {
+        audio.removeRemoteAudio(
+          userId
+        );
+      }
+    }
+  }, [
+    position,
+    nearbyUsers,
+    remoteStreams,
+  ]);
 
-        if (e.key === "ArrowDown") {
-          y += speed;
-        }
+  // ==========================================================
+  // MOVE AVATAR
+  // ==========================================================
 
-        if (e.key === "ArrowLeft") {
-          x -= speed;
-        }
+  const moveAvatar =
+    useCallback(
+      (dx, dy) => {
+        const current =
+          positionRef.current;
 
-        if (e.key === "ArrowRight") {
-          x += speed;
-        }
-
-        // ================= BOUNDARY =================
-
-        const avatarSize = 40;
-
-        const maxX = Math.max(
+        const newX = Math.max(
           0,
-          officeLayout.width -
-            avatarSize
+          Math.min(
+            WORLD_WIDTH,
+            current.x + dx
+          )
         );
 
-        const maxY = Math.max(
+        const newY = Math.max(
           0,
-          officeLayout.height -
-            avatarSize
+          Math.min(
+            WORLD_HEIGHT,
+            current.y + dy
+          )
         );
 
-        x = Math.max(
-          0,
-          Math.min(x, maxX)
-        );
-
-        y = Math.max(
-          0,
-          Math.min(y, maxY)
-        );
-
-        // ================= COLLISION =================
-
-        if (checkCollision(x, y)) {
-          return prev;
+        if (
+          newX === current.x &&
+          newY === current.y
+        ) {
+          return;
         }
 
-        // ================= SEND MOVEMENT =================
+        const newPosition = {
+          x: newX,
+          y: newY,
+        };
+
+        positionRef.current =
+          newPosition;
+
+        setPosition(
+          newPosition
+        );
 
         if (socket.connected) {
           socket.emit(
             "avatar:move",
             {
-              userId,
-              roomId,
-              x,
-              y,
+              userId:
+                userIdRef.current,
+              x: newX,
+              y: newY,
             }
           );
         }
+      },
+      []
+    );
 
-        return {
-          x,
-          y,
-        };
-      });
-    };
+  // ==========================================================
+  // KEYBOARD HANDLING
+  // ==========================================================
+
+  useEffect(() => {
+    const handleKeyDown =
+      (event) => {
+        const key =
+          event.key.toLowerCase();
+
+        if (
+          [
+            "arrowup",
+            "arrowdown",
+            "arrowleft",
+            "arrowright",
+            "w",
+            "a",
+            "s",
+            "d",
+          ].includes(key)
+        ) {
+          event.preventDefault();
+
+          keysRef.current[key] =
+            true;
+        }
+      };
+
+    const handleKeyUp =
+      (event) => {
+        const key =
+          event.key.toLowerCase();
+
+        keysRef.current[key] =
+          false;
+      };
 
     window.addEventListener(
       "keydown",
-      handleKey
+      handleKeyDown
+    );
+
+    window.addEventListener(
+      "keyup",
+      handleKeyUp
     );
 
     return () => {
       window.removeEventListener(
         "keydown",
-        handleKey
+        handleKeyDown
       );
+
+      window.removeEventListener(
+        "keyup",
+        handleKeyUp
+      );
+    };
+  }, []);
+
+  // ==========================================================
+  // 60 FPS MOVEMENT LOOP
+  // ==========================================================
+
+  useEffect(() => {
+    let lastTime =
+      performance.now();
+
+    const animationLoop =
+      (currentTime) => {
+        const delta =
+          Math.min(
+            currentTime -
+              lastTime,
+            50
+          );
+
+        lastTime =
+          currentTime;
+
+        const keys =
+          keysRef.current;
+
+        let dx = 0;
+        let dy = 0;
+
+        if (
+          keys.arrowup ||
+          keys.w
+        ) {
+          dy -= 1;
+        }
+
+        if (
+          keys.arrowdown ||
+          keys.s
+        ) {
+          dy += 1;
+        }
+
+        if (
+          keys.arrowleft ||
+          keys.a
+        ) {
+          dx -= 1;
+        }
+
+        if (
+          keys.arrowright ||
+          keys.d
+        ) {
+          dx += 1;
+        }
+
+        if (dx !== 0 || dy !== 0) {
+          const length =
+            Math.sqrt(
+              dx * dx +
+                dy * dy
+            );
+
+          dx /= length;
+          dy /= length;
+
+          const distance =
+            MOVE_SPEED *
+            (delta / 16.67);
+
+          moveAvatar(
+            dx * distance,
+            dy * distance
+          );
+        }
+
+        animationFrameRef.current =
+          requestAnimationFrame(
+            animationLoop
+          );
+      };
+
+    animationFrameRef.current =
+      requestAnimationFrame(
+        animationLoop
+      );
+
+    return () => {
+      if (
+        animationFrameRef.current
+      ) {
+        cancelAnimationFrame(
+          animationFrameRef.current
+        );
+      }
     };
   }, [
-    userId,
-    roomId,
-    officeLayout.width,
-    officeLayout.height,
-    obstacles,
-    furniture,
+    moveAvatar,
   ]);
 
-  // ================= USERS =================
+  // ==========================================================
+  // CHAT SEND
+  // ==========================================================
 
-  const otherUsers = users.filter(
-    (user) =>
-      user.userId !== userId
-  );
+  const sendMessage =
+    useCallback(
+      (message) => {
+        if (
+          typeof message !==
+          "string"
+        ) {
+          return;
+        }
 
-  // ================= CHAT =================
+        const cleanMessage =
+          message.trim();
 
-  const handleSendMessage = (
-    message
-  ) => {
-    const text = message.trim();
+        if (!cleanMessage) {
+          return;
+        }
 
-    if (!text) {
-      return;
-    }
+        socket.emit(
+          "chat:send",
+          {
+            message:
+              cleanMessage,
+          }
+        );
+      },
+      []
+    );
 
-    const newMessage = {
-      id: crypto.randomUUID(),
-      userId,
-      name: username,
-      text,
-      timestamp:
-        new Date().toISOString(),
-    };
+  // ==========================================================
+  // MUTE / UNMUTE
+  // ==========================================================
 
-    // Show immediately
-    setMessages((prev) => [
-      ...prev,
-      newMessage,
+  const toggleMute =
+    useCallback(() => {
+      const stream =
+        localStreamRef.current;
+
+      if (!stream) {
+        enableVoice();
+        return;
+      }
+
+      const newMuted =
+        !isMuted;
+
+      stream
+        .getAudioTracks()
+        .forEach(
+          (track) => {
+            track.enabled =
+              !newMuted;
+          }
+        );
+
+      setIsMuted(
+        newMuted
+      );
+    }, [
+      isMuted,
+      enableVoice,
     ]);
 
-    // Send backend
-    if (socket.connected) {
-      socket.emit(
-        "chat:send",
-        newMessage
-      );
-    }
+  // ==========================================================
+  // MANUAL VOICE BUTTON
+  // ==========================================================
 
-    console.log(
-      "💬 Chat message:",
-      newMessage
+  const handleVoiceToggle =
+    useCallback(async () => {
+      if (
+        !localStreamRef.current
+      ) {
+        await enableVoice();
+        return;
+      }
+
+      toggleMute();
+    }, [
+      enableVoice,
+      toggleMute,
+    ]);
+
+  // ==========================================================
+  // CLICK TO MOVE
+  // ==========================================================
+
+  const handleOfficeClick =
+    useCallback(
+      (event) => {
+        const rect =
+          event.currentTarget.getBoundingClientRect();
+
+        const x =
+          event.clientX -
+          rect.left;
+
+        const y =
+          event.clientY -
+          rect.top;
+
+        const targetX =
+          Math.max(
+            0,
+            Math.min(
+              WORLD_WIDTH,
+              x
+            )
+          );
+
+        const targetY =
+          Math.max(
+            0,
+            Math.min(
+              WORLD_HEIGHT,
+              y
+            )
+          );
+
+        positionRef.current =
+          {
+            x: targetX,
+            y: targetY,
+          };
+
+        setPosition(
+          positionRef.current
+        );
+
+        if (socket.connected) {
+          socket.emit(
+            "avatar:move",
+            {
+              userId:
+                userIdRef.current,
+              x: targetX,
+              y: targetY,
+            }
+          );
+        }
+      },
+      []
     );
-  };
 
-  // ================= UI =================
+  // ==========================================================
+  // OBSTACLES
+  // ==========================================================
+
+  const obstacles = [
+    {
+      id: "wall-1",
+      x: 360,
+      y: 80,
+      width: 20,
+      height: 220,
+    },
+    {
+      id: "wall-2",
+      x: 700,
+      y: 300,
+      width: 20,
+      height: 220,
+    },
+  ];
+
+  // ==========================================================
+  // RENDER
+  // ==========================================================
 
   return (
-    <div className="flex-1 relative overflow-hidden bg-slate-900 pb-16 lg:pb-0">
+    <div
+      className="proxispeak-app"
+      style={{
+        width: "100%",
+        height: "100vh",
+        display: "flex",
+        flexDirection: "column",
+        overflow: "hidden",
+      }}
+    >
+      {/* ======================================================
+          NAVBAR
+      ====================================================== */}
 
-      {/* ================= FLOOR ================= */}
+      <Navbar />
+
+      {/* ======================================================
+          MAIN AREA
+      ====================================================== */}
 
       <div
-        className="absolute inset-0"
         style={{
-          background: `
-            linear-gradient(
-              90deg,
-              #3b3b3b 1px,
-              transparent 1px
-            ),
-            linear-gradient(
-              #3b3b3b 1px,
-              transparent 1px
-            ),
-            linear-gradient(
-              135deg,
-              #2f343c,
-              #23272f
-            )
-          `,
-
-          backgroundSize:
-            "80px 80px, 80px 80px, 100% 100%",
+          flex: 1,
+          display: "flex",
+          minHeight: 0,
         }}
-      />
+      >
+        {/* ====================================================
+            LEFT SIDEBAR
+        ==================================================== */}
 
-      {/* ================= FLOOR LIGHTING ================= */}
+        <Sidebar />
 
-      <div className="absolute inset-0 bg-gradient-to-br from-white/5 via-transparent to-black/10 pointer-events-none" />
+        {/* ====================================================
+            OFFICE
+        ==================================================== */}
 
-      {/* ================= STATUS BAR ================= */}
+        <main
+          style={{
+            flex: 1,
+            position: "relative",
+            overflow: "auto",
+            background:
+              "#e5e7eb",
+            padding: "20px",
+          }}
+        >
+          {/* ==================================================
+              OFFICE WORLD
+          ================================================== */}
 
-      <div className="absolute top-4 right-4 z-50 flex items-center gap-3">
-
-        {/* Live Clock */}
-
-        <div className="hidden sm:flex items-center gap-2 px-4 py-2 rounded-xl bg-slate-800/90 backdrop-blur-md border border-slate-700 shadow-lg">
-
-          <span className="text-sm">
-            🕐
-          </span>
-
-          <span className="text-white text-sm font-semibold">
-            {currentTime.toLocaleTimeString(
-              [],
-              {
-                hour: "2-digit",
-                minute: "2-digit",
-                second: "2-digit",
-              }
-            )}
-          </span>
-
-        </div>
-
-        {/* User Status */}
-
-        <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-slate-800/90 backdrop-blur-md border border-slate-700 shadow-lg">
-
-          <span
-            className={`w-2.5 h-2.5 rounded-full ${
-              userStatus === "Online"
-                ? "bg-green-400"
-                : userStatus === "Busy"
-                ? "bg-red-400"
-                : "bg-yellow-400"
-            }`}
-          />
-
-          <select
-            value={userStatus}
-            onChange={(e) =>
-              setUserStatus(
-                e.target.value
-              )
+          <div
+            className="office-world"
+            onClick={
+              handleOfficeClick
             }
-            className="bg-transparent text-white text-sm font-medium outline-none cursor-pointer"
+            style={{
+              position:
+                "relative",
+              width:
+                `${WORLD_WIDTH}px`,
+              height:
+                `${WORLD_HEIGHT}px`,
+              minWidth:
+                `${WORLD_WIDTH}px`,
+              minHeight:
+                `${WORLD_HEIGHT}px`,
+              margin:
+                "0 auto",
+              background:
+                "#f8fafc",
+              border:
+                "2px solid #cbd5e1",
+              borderRadius:
+                "12px",
+              overflow:
+                "hidden",
+              boxShadow:
+                "0 10px 30px rgba(0,0,0,0.12)",
+            }}
           >
-            <option
-              value="Online"
-              className="bg-slate-800"
-            >
-              Online
-            </option>
+            {/* =================================================
+                GRID
+            ================================================= */}
 
-            <option
-              value="Busy"
-              className="bg-slate-800"
-            >
-              Busy
-            </option>
+            <div
+              style={{
+                position:
+                  "absolute",
+                inset: 0,
+                pointerEvents:
+                  "none",
+                opacity: 0.45,
+                backgroundImage:
+                  "linear-gradient(#dbe3ea 1px, transparent 1px), linear-gradient(90deg, #dbe3ea 1px, transparent 1px)",
+                backgroundSize:
+                  "25px 25px",
+              }}
+            />
 
-            <option
-              value="Away"
-              className="bg-slate-800"
-            >
-              Away
-            </option>
-          </select>
+            {/* =================================================
+                TITLE
+            ================================================= */}
 
-        </div>
+            <div
+              style={{
+                position:
+                  "absolute",
+                top: "12px",
+                left: "16px",
+                zIndex: 10,
+                background:
+                  "rgba(255,255,255,0.9)",
+                padding:
+                  "6px 12px",
+                borderRadius:
+                  "8px",
+                fontSize:
+                  "14px",
+                fontWeight:
+                  "600",
+                pointerEvents:
+                  "none",
+              }}
+            >
+              ProxiSpeak Office
+            </div>
+
+            {/* =================================================
+                CONNECTION STATUS
+            ================================================= */}
+
+            <div
+              style={{
+                position:
+                  "absolute",
+                top: "12px",
+                right: "16px",
+                zIndex: 10,
+                background:
+                  "rgba(255,255,255,0.9)",
+                padding:
+                  "6px 12px",
+                borderRadius:
+                  "8px",
+                fontSize:
+                  "12px",
+                pointerEvents:
+                  "none",
+              }}
+            >
+              <span>
+                {isConnected
+                  ? "🟢 Connected"
+                  : "🔴 Disconnected"}
+              </span>
+            </div>
+
+            {/* =================================================
+                FURNITURE
+            ================================================= */}
+
+            <Furniture />
+
+            {/* =================================================
+                SIMPLE SOUND-BLOCKING WALLS
+            ================================================= */}
+
+            {obstacles.map(
+              (obstacle) => (
+                <div
+                  key={
+                    obstacle.id
+                  }
+                  style={{
+                    position:
+                      "absolute",
+                    left:
+                      `${obstacle.x}px`,
+                    top:
+                      `${obstacle.y}px`,
+                    width:
+                      `${obstacle.width}px`,
+                    height:
+                      `${obstacle.height}px`,
+                    background:
+                      "#64748b",
+                    borderRadius:
+                      "4px",
+                    zIndex: 4,
+                    pointerEvents:
+                      "none",
+                  }}
+                />
+              )
+            )}
+
+            {/* =================================================
+                OTHER USERS
+            ================================================= */}
+
+            {users.map(
+              (user) => (
+                <div
+                  key={
+                    user.userId
+                  }
+                  style={{
+                    position:
+                      "absolute",
+                    left:
+                      `${user.position?.x || 0}px`,
+                    top:
+                      `${user.position?.y || 0}px`,
+                    transform:
+                      "translate(-50%, -50%)",
+                    zIndex: 20,
+                    pointerEvents:
+                      "none",
+                  }}
+                >
+                  <div
+                    style={{
+                      background:
+                        "rgba(37,99,235,0.9)",
+                      color:
+                        "white",
+                      padding:
+                        "4px 8px",
+                      borderRadius:
+                        "10px",
+                      fontSize:
+                        "11px",
+                      whiteSpace:
+                        "nowrap",
+                    }}
+                  >
+                    {user.name}
+                  </div>
+
+                  <div
+                    style={{
+                      width:
+                        "28px",
+                      height:
+                        "28px",
+                      margin:
+                        "4px auto 0",
+                      borderRadius:
+                        "50%",
+                      background:
+                        "#3b82f6",
+                      border:
+                        "3px solid white",
+                      boxShadow:
+                        "0 2px 8px rgba(0,0,0,0.2)",
+                    }}
+                  />
+                </div>
+              )
+            )}
+
+            {/* =================================================
+                CURRENT USER AVATAR
+            ================================================= */}
+
+            <div
+              style={{
+                position:
+                  "absolute",
+                left:
+                  `${position.x}px`,
+                top:
+                  `${position.y}px`,
+                transform:
+                  "translate(-50%, -50%)",
+                zIndex: 30,
+                pointerEvents:
+                  "none",
+              }}
+            >
+              <div
+                style={{
+                  background:
+                    "rgba(16,185,129,0.95)",
+                  color:
+                    "white",
+                  padding:
+                    "4px 8px",
+                  borderRadius:
+                    "10px",
+                  fontSize:
+                    "11px",
+                  whiteSpace:
+                    "nowrap",
+                }}
+              >
+                {usernameRef.current ||
+                  "You"}
+              </div>
+
+              <div
+                style={{
+                  width:
+                    "32px",
+                  height:
+                    "32px",
+                  margin:
+                    "4px auto 0",
+                  borderRadius:
+                    "50%",
+                  background:
+                    "#10b981",
+                  border:
+                    "3px solid white",
+                  boxShadow:
+                    "0 0 0 5px rgba(16,185,129,0.2)",
+                }}
+              />
+            </div>
+
+            {/* =================================================
+                HEARING RADIUS
+            ================================================= */}
+
+            <div
+              style={{
+                position:
+                  "absolute",
+                left:
+                  `${position.x -
+                    HEARING_DISTANCE}px`,
+                top:
+                  `${position.y -
+                    HEARING_DISTANCE}px`,
+                width:
+                  `${HEARING_DISTANCE *
+                    2}px`,
+                height:
+                  `${HEARING_DISTANCE *
+                    2}px`,
+                border:
+                  "1px dashed rgba(16,185,129,0.45)",
+                borderRadius:
+                  "50%",
+                background:
+                  "rgba(16,185,129,0.04)",
+                pointerEvents:
+                  "none",
+                zIndex: 2,
+              }}
+            />
+
+            {/* =================================================
+                NEARBY USER INDICATORS
+            ================================================= */}
+
+            {nearbyUsers.map(
+              (user) => (
+                <div
+                  key={
+                    `nearby-${user.userId}`
+                  }
+                  style={{
+                    position:
+                      "absolute",
+                    left:
+                      `${user.position?.x || 0}px`,
+                    top:
+                      `${user.position?.y || 0}px`,
+                    transform:
+                      "translate(-50%, -50%)",
+                    width:
+                      "45px",
+                    height:
+                      "45px",
+                    border:
+                      "2px solid rgba(16,185,129,0.6)",
+                    borderRadius:
+                      "50%",
+                    pointerEvents:
+                      "none",
+                    zIndex: 15,
+                  }}
+                />
+              )
+            )}
+
+            {/* =================================================
+                HINT
+            ================================================= */}
+
+            <div
+              style={{
+                position:
+                  "absolute",
+                bottom:
+                  "12px",
+                left:
+                  "50%",
+                transform:
+                  "translateX(-50%)",
+                background:
+                  "rgba(255,255,255,0.9)",
+                padding:
+                  "7px 12px",
+                borderRadius:
+                  "8px",
+                fontSize:
+                  "12px",
+                color:
+                  "#475569",
+                pointerEvents:
+                  "none",
+                zIndex: 40,
+              }}
+            >
+              Use W A S D / Arrow Keys to
+              move • Click office to move
+            </div>
+          </div>
+        </main>
+
+        {/* ====================================================
+            RIGHT SIDEBAR
+        ==================================================== */}
+
+        <aside
+          style={{
+            width:
+              "280px",
+            minWidth:
+              "280px",
+            padding:
+              "12px",
+            overflowY:
+              "auto",
+            background:
+              "#ffffff",
+            borderLeft:
+              "1px solid #e2e8f0",
+          }}
+        >
+          {/* ==================================================
+              ONLINE USERS
+          ================================================== */}
+
+          <div
+            style={{
+              marginBottom:
+                "12px",
+            }}
+          >
+            <OnlineUsers
+              users={users}
+              nearbyUsers={
+                nearbyUsers
+              }
+            />
+          </div>
+
+          {/* ==================================================
+              VOICE
+          ================================================== */}
+
+          <div
+            style={{
+              marginBottom:
+                "12px",
+            }}
+          >
+            <ProximityVoice
+              nearbyUsers={
+                nearbyUsers
+              }
+              remoteStreams={
+                remoteStreams
+              }
+            />
+          </div>
+
+          {/* ==================================================
+              VOICE CONTROLS
+          ================================================== */}
+
+          <div
+            style={{
+              marginBottom:
+                "12px",
+            }}
+          >
+            <VoiceControls
+              isMuted={
+                isMuted
+              }
+              micEnabled={
+                micEnabled
+              }
+              onToggleMute={
+                handleVoiceToggle
+              }
+              onEnableVoice={
+                enableVoice
+              }
+            />
+          </div>
+
+          {/* ==================================================
+              MINI MAP
+          ================================================== */}
+
+          <div
+            style={{
+              marginBottom:
+                "12px",
+            }}
+          >
+            <MiniMap
+              position={
+                position
+              }
+              users={users}
+            />
+          </div>
+        </aside>
       </div>
 
-      {/* ================= ONLINE USERS ================= */}
+      {/* ======================================================
+          CHAT
+      ====================================================== */}
 
-      <OnlineUsers
-        users={otherUsers}
-      />
-
-      {/* ================= SOUND / PHYSICAL OBSTACLES ================= */}
-
-      {obstacles.map(
-        (obstacle) => (
-          <div
-            key={
-              obstacle._id ||
-              `obstacle-${obstacle.x}-${obstacle.y}`
-            }
-            className="absolute pointer-events-none"
-            style={{
-              left: obstacle.x,
-              top: obstacle.y,
-              width: obstacle.width,
-              height: obstacle.height,
-
-              background:
-                obstacle.type === "wall"
-                  ? "rgba(100, 116, 139, 0.95)"
-                  : "rgba(71, 85, 105, 0.75)",
-
-              border:
-                obstacle.blocksSound
-                  ? "2px solid rgba(248, 113, 113, 0.8)"
-                  : "1px solid rgba(148, 163, 184, 0.5)",
-
-              borderRadius:
-                obstacle.type === "wall"
-                  ? 2
-                  : 6,
-            }}
-          />
-        )
-      )}
-
-      {/* ================= FURNITURE ================= */}
-
-      <Furniture
-        items={furniture}
-      />
-
-      {/* ================= YOUR AVATAR ================= */}
-
-      <Avatar
-        x={position.x}
-        y={position.y}
-        name={username}
-      />
-
-      {/* ================= OTHER USERS ================= */}
-
-      {otherUsers.map(
-        (user) => (
-          <Avatar
-            key={user.userId}
-            x={
-              user.position?.x ??
-              400
-            }
-            y={
-              user.position?.y ??
-              300
-            }
-            name={user.name}
-            isNearby={nearbyUsers.some(
-              (nearbyUser) =>
-                nearbyUser.userId ===
-                user.userId
-            )}
-          />
-        )
-      )}
-
-      {/* ================= CHAT ================= */}
-
-      <ChatBox
-        messages={messages}
-        onSend={handleSendMessage}
-        username={username}
-      />
-
-      {/* ================= PROXIMITY VOICE ================= */}
-
-      <ProximityVoice
-        userId={userId}
-        localPosition={position}
-        nearbyUsers={nearbyUsers}
-      />
-
-      {/* ================= VOICE CONTROLS ================= */}
-
-      <VoiceControls />
-
-      {/* ================= MINI MAP ================= */}
-
-      <div className="hidden lg:block">
-        <MiniMap
-          position={position}
-          users={otherUsers.map(
-            (user) => ({
-              id: user.userId,
-
-              x:
-                user.position?.x ??
-                400,
-
-              y:
-                user.position?.y ??
-                300,
-
-              name: user.name,
-            })
-          )}
+      <div
+        style={{
+          position:
+            "fixed",
+          right:
+            "300px",
+          bottom:
+            "20px",
+          zIndex: 100,
+        }}
+      >
+        <ChatBox
+          messages={
+            messages
+          }
+          onSendMessage={
+            sendMessage
+          }
         />
       </div>
-
     </div>
   );
 }
