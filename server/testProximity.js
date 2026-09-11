@@ -28,7 +28,6 @@ const test = async () => {
 
     const users = await findNearbyUsers(
       "test-user",
-      room._id,
       400,
       300,
       100
@@ -50,7 +49,6 @@ const test = async () => {
 
     const nearbySmallRadius = await findNearbyUsers(
       "test-user",
-      room._id,
       400,
       300,
       30
@@ -66,7 +64,6 @@ const test = async () => {
 
     const nearbyLargeRadius = await findNearbyUsers(
       "test-user",
-      room._id,
       400,
       300,
       200
